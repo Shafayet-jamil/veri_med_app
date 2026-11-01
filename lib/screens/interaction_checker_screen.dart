@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import '../services/medicine_api.dart';
 
 class InteractionCheckerScreen extends StatefulWidget {
-  const InteractionCheckerScreen({super.key});
+  const InteractionCheckerScreen({super.key, this.api});
+
+  final MedicineApi? api;
 
   @override
   State<InteractionCheckerScreen> createState() =>
@@ -10,7 +12,7 @@ class InteractionCheckerScreen extends StatefulWidget {
 }
 
 class _InteractionCheckerScreenState extends State<InteractionCheckerScreen> {
-  final _api = MedicineApi();
+  late final _api = widget.api ?? MedicineApi();
   final _searchController = TextEditingController();
 
   List<Map<String, dynamic>> _allMedicines = [];
@@ -393,7 +395,7 @@ class _InteractionCheckerScreenState extends State<InteractionCheckerScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'No interactions found',
+                      'No known interactions found',
                       style: Theme.of(context)
                           .textTheme
                           .titleMedium
@@ -401,7 +403,10 @@ class _InteractionCheckerScreenState extends State<InteractionCheckerScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'No known interactions between the selected medicines were found in our database.',
+                      'None of the selected medicines are listed together in our '
+                      'interaction database. This database covers a limited set of '
+                      'common drugs, so it does not prove the combination is safe. '
+                      'Always confirm with a doctor or pharmacist.',
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                   ],

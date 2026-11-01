@@ -53,3 +53,5 @@ app.*.map.json
 .widget_preview/
 
 
+/mediCheker/**/__pycache__/
+/mediCheker/.pytest_cache/

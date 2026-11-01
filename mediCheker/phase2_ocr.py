@@ -4,10 +4,19 @@ import numpy as np
 import os
 import re
 import tempfile
+import threading
+
+from lookup import normalize_ma_number
 
 
 # Reusable reader — EasyOCR model loading is expensive (~2-4 s), so we do it once.
 _reader = None
+# OCR is CPU-heavy and the reader is shared, so scans run one at a time.
+_ocr_lock = threading.Lock()
+
+
+class UnreadableImageError(ValueError):
+    """The uploaded file could not be decoded as an image."""
 
 
 def _get_reader():
@@ -19,9 +28,21 @@ def _get_reader():
 
 # ── Preprocessing strategies ──────────────────────────────────────────────────
 
-def _upscale(img, factor=2):
+# Small labels are enlarged (up to 2x) so EasyOCR can read the fine print, but
+# the longest side is capped: OCR time grows with pixel count, and phone photos
+# enlarged 2x (e.g. 2400 -> 4800 px) can take minutes per scan.
+MAX_UPSCALE = 2.0
+MAX_SIDE = 2000
+
+
+def _resize_for_ocr(img, max_upscale=MAX_UPSCALE, max_side=MAX_SIDE):
     h, w = img.shape[:2]
-    return cv2.resize(img, (w * factor, h * factor), interpolation=cv2.INTER_LANCZOS4)
+    scale = min(max_upscale, max_side / max(h, w))
+    if abs(scale - 1.0) < 0.01:
+        return img
+    interpolation = cv2.INTER_LANCZOS4 if scale > 1 else cv2.INTER_AREA
+    return cv2.resize(img, (round(w * scale), round(h * scale)),
+                      interpolation=interpolation)
 
 
 def _to_gray(img):
@@ -188,17 +209,6 @@ def _deduplicate(texts: list[str]) -> list[str]:
     return result
 
 
-# ── MA number normalization ──────────────────────────────────────────────────
-
-def normalize_ma_number(ma_number: str) -> str:
-    tablet_pattern = re.compile(r'^(\d+)-(\d{3})-(\d+)$')
-    match = tablet_pattern.match(ma_number.strip())
-    if match:
-        prefix, middle, suffix = match.groups()
-        return f"{prefix}-0{middle}-{suffix}"
-    return ma_number
-
-
 # ── Multi-strategy OCR runner ────────────────────────────────────────────────
 
 def _run_ocr_on_image(processed_gray, min_confidence=0.35):
@@ -224,6 +234,20 @@ def _run_ocr_on_image(processed_gray, min_confidence=0.35):
             os.remove(temp_path)
 
 
+_DAR_LABELLED = re.compile(
+    r'\b(?:DAR|MA)[\s.:\-]*(?:No\.?[\s.:\-]*)?\d{2,4}[\s.:\-]+\d{2,5}[\s.:\-]+\d{2,5}',
+    re.IGNORECASE,
+)
+_MFG_LICENCE = re.compile(r'(?:mfg|mig)[\s.:]*lic[\s.:]*no[^\d]*\d{3}', re.IGNORECASE)
+
+
+def _has_key_identifiers(results):
+    """True when the text already holds a labelled DAR/MA number and an MFG
+    licence number: everything the database lookup needs."""
+    text = _fix_ocr_errors(" ".join(_clean_text(t) for _, t, _ in results))
+    return bool(_DAR_LABELLED.search(text) and _MFG_LICENCE.search(text))
+
+
 def _score_results(results):
     """Score a set of OCR results: prefer more high-confidence text."""
     if not results:
@@ -234,17 +258,25 @@ def _score_results(results):
 
 
 def run_easyocr(image_path):
+    with _ocr_lock:
+        return _run_easyocr(image_path)
+
+
+def _run_easyocr(image_path):
     print("--Phase 2: Running Image Preprocessing & OCR--")
 
     img = cv2.imread(image_path)
     if img is None:
-        raise FileNotFoundError(f"Image not found: {image_path}")
+        raise UnreadableImageError("The uploaded file is not a readable image.")
 
-    upscaled = _upscale(img, factor=2)
-    gray = _to_gray(upscaled)
+    resized = _resize_for_ocr(img)
+    gray = _to_gray(resized)
     gray = _deskew(gray)
 
+    # Plain grayscale goes first: EasyOCR often reads it best, and when it
+    # already finds the key identifiers the other passes are skipped.
     strategies = {
+        "plain": lambda g: g,
         "clahe_otsu": _strategy_clahe_otsu,
         "adaptive": _strategy_adaptive,
         "inverted": _strategy_inverted,
@@ -266,15 +298,11 @@ def run_easyocr(image_path):
             best_score = score
             best_results = results
             best_strategy = name
-
-    # Also try the plain gray (no binarization) — EasyOCR sometimes works better on it
-    plain_results = _run_ocr_on_image(gray, min_confidence=0.35)
-    plain_score = _score_results(plain_results)
-    print(f"  [plain] {len(plain_results)} detections, score={plain_score:.1f}")
-    if plain_score > best_score:
-        best_score = plain_score
-        best_results = plain_results
-        best_strategy = "plain"
+        if _has_key_identifiers(results):
+            print(f"  [{name}] found DAR/MA and MFG licence numbers, stopping early")
+            best_results = results
+            best_strategy = name
+            break
 
     print(f"  Best strategy: {best_strategy}")
 

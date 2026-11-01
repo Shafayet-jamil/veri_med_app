@@ -13,7 +13,10 @@ void main() {
 }
 
 class MediCheckerApp extends StatelessWidget {
-  const MediCheckerApp({super.key});
+  const MediCheckerApp({super.key, this.api});
+
+  /// Overrides the backend client, e.g. with a fake one in tests.
+  final MedicineApi? api;
 
   @override
   Widget build(BuildContext context) {
@@ -42,13 +45,15 @@ class MediCheckerApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const AppShell(),
+      home: AppShell(api: api),
     );
   }
 }
 
 class AppShell extends StatefulWidget {
-  const AppShell({super.key});
+  const AppShell({super.key, this.api});
+
+  final MedicineApi? api;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -57,10 +62,10 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _currentIndex = 0;
 
-  final _pages = const <Widget>[
-    ScanScreen(),
-    LookupScreen(),
-    InteractionCheckerScreen(),
+  late final _pages = <Widget>[
+    ScanScreen(api: widget.api),
+    LookupScreen(api: widget.api),
+    InteractionCheckerScreen(api: widget.api),
   ];
 
   @override
@@ -97,14 +102,16 @@ class _AppShellState extends State<AppShell> {
 // ─── Scan Screen ─────────────────────────────────────────────────────────────
 
 class ScanScreen extends StatefulWidget {
-  const ScanScreen({super.key});
+  const ScanScreen({super.key, this.api});
+
+  final MedicineApi? api;
 
   @override
   State<ScanScreen> createState() => _ScanScreenState();
 }
 
 class _ScanScreenState extends State<ScanScreen> {
-  final _api = MedicineApi();
+  late final _api = widget.api ?? MedicineApi();
   final _picker = ImagePicker();
 
   XFile? _image;
@@ -343,14 +350,16 @@ class _ScanScreenState extends State<ScanScreen> {
 // ─── Lookup Screen ───────────────────────────────────────────────────────────
 
 class LookupScreen extends StatefulWidget {
-  const LookupScreen({super.key});
+  const LookupScreen({super.key, this.api});
+
+  final MedicineApi? api;
 
   @override
   State<LookupScreen> createState() => _LookupScreenState();
 }
 
 class _LookupScreenState extends State<LookupScreen> {
-  final _api = MedicineApi();
+  late final _api = widget.api ?? MedicineApi();
   final _licenseController = TextEditingController();
 
   Map<String, dynamic>? _result;

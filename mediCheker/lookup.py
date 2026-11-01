@@ -1,6 +1,7 @@
 import pandas as pd
 import re
 import os
+from functools import lru_cache
 
 # ── File paths ──────────────────────────────────────────────────────────────
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -17,14 +18,15 @@ def extract_3digit(value: str) -> str:
     return match.group(1) if match else str(value).strip()
 
 def normalize_ma_number(ma_number: str) -> str:
+    """Pad the middle part to 4 digits, as stored in the DGDA database.
 
-    tablet_pattern = re.compile(r'^(\d+)-(\d{3})-(\d+)$')
-    match = tablet_pattern.match(ma_number.strip())
+    Packages often drop leading zeros: "353-41-023" and "481-003-034" are
+    stored as "353-0041-023" and "481-0003-034".
+    """
+    match = re.match(r'^(\d+)-(\d{1,3})-(\d+)$', ma_number.strip())
     if match:
         prefix, middle, suffix = match.groups()
-        return f"{prefix}-0{middle}-{suffix}"
-
-
+        return f"{prefix}-{middle.zfill(4)}-{suffix}"
     return ma_number
 
 def extract_and_normalize_dar_ma_number(text: str) -> str | None:
@@ -49,8 +51,13 @@ def extract_and_normalize_dar_ma_number(text: str) -> str | None:
     return None
 
 
+@lru_cache(maxsize=1)
 def load_sheets() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load the medicine and company sheets.
 
+    The result is cached, so the CSV files are read only once per process.
+    Callers must treat the returned DataFrames as read-only.
+    """
     med_df = pd.read_csv(MEDICINE_CSV, dtype=str).fillna("")
     cmp_df = pd.read_csv(COMPANY_CSV,  dtype=str).fillna("")
 
@@ -90,7 +97,7 @@ def lookup_by_dar(dar_query: str,
 
 
     merged = med_rows.merge(
-        cmp_df[["Company", "_company_key", "Address", "Bio_3", "NonBio_3", "Validity", "Status"]].drop_duplicates(subset=["_company_key"]),
+        cmp_df[["_company_key", "Address", "Bio_3", "NonBio_3", "Validity", "Status"]].drop_duplicates(subset=["_company_key"]),
         on="_company_key",
         how="left"
     )
@@ -204,7 +211,7 @@ def run_lookup(ocr_text: str) -> pd.DataFrame:
             if not med_rows_for_company.empty:
                 single_med_row = med_rows_for_company.iloc[0:1].copy()
                 final_result_for_display = single_med_row.merge(
-                    first_matched_company[["Company", "_company_key", "Address", "Bio_3", "NonBio_3", "Validity", "Status"]],
+                    first_matched_company[["_company_key", "Address", "Bio_3", "NonBio_3", "Validity", "Status"]],
                     on="_company_key",
                     how="left"
                 )
