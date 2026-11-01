@@ -5,11 +5,13 @@ from flask import Flask, request, jsonify
 # Import existing backend modules
 from lookup import run_lookup, lookup_by_dar, load_sheets
 from phase2_ocr import run_easyocr
+from interactions import load_interactions, load_medicine_names, check_interactions
 
 app = Flask(__name__)
 
 # Load medicine and company dataframes
 med_df, cmp_df = load_sheets()
+interactions_df = load_interactions()
 
 
 def medicine_details(row, dar_number=None):
@@ -115,6 +117,35 @@ def verify_license():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/medicine-names', methods=['GET'])
+def get_medicine_names():
+    try:
+        names = load_medicine_names()
+        return jsonify({"medicines": names})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/check-interactions', methods=['POST'])
+def check_drug_interactions():
+    data = request.get_json(silent=True) or {}
+    medicines = data.get('medicines', [])
+
+    if not isinstance(medicines, list) or len(medicines) < 2:
+        return jsonify({"error": "Provide at least 2 medicine names"}), 400
+
+    try:
+        results = check_interactions(medicines, interactions_df)
+        return jsonify({
+            "interactions_found": len(results) > 0,
+            "interaction_count": len(results),
+            "interactions": results,
+            "medicines_checked": medicines,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 if __name__ == '__main__':
     print("Starting MediChecker Python Server on http://0.0.0.0:5000 ...")

@@ -38,6 +38,30 @@ class MedicineApi {
     return _decodeResponse(response);
   }
 
+  Future<List<Map<String, dynamic>>> getMedicineNames() async {
+    final response = await _client
+        .get(_endpoint('/medicine-names'))
+        .timeout(const Duration(seconds: 30));
+    final decoded = _decodeResponse(response);
+    final medicines = decoded['medicines'];
+    if (medicines is List) {
+      return medicines.cast<Map<String, dynamic>>();
+    }
+    return [];
+  }
+
+  Future<Map<String, dynamic>> checkInteractions(
+      List<String> medicineNames) async {
+    final response = await _client
+        .post(
+          _endpoint('/check-interactions'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'medicines': medicineNames}),
+        )
+        .timeout(const Duration(seconds: 30));
+    return _decodeResponse(response);
+  }
+
   Uri _endpoint(String path) {
     final base = Uri.parse(_apiBaseUrl);
     return base.resolve(path);

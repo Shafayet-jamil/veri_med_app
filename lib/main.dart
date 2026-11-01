@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'screens/interaction_checker_screen.dart';
 import 'services/medicine_api.dart';
 
 void main() {
@@ -143,6 +144,18 @@ class _MediCheckerHomePageState extends State<MediCheckerHomePage> {
           ],
         ),
         backgroundColor: Theme.of(context).colorScheme.surface,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.compare_arrows),
+            tooltip: 'Drug Interactions',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const InteractionCheckerScreen(),
+              ),
+            ),
+          ),
+        ],
       ),
       body: SafeArea(
         child: Center(

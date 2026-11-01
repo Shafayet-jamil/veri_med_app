@@ -1,0 +1,66 @@
+drug_a,drug_b,severity,effect,recommendation
+Warfarin,Aspirin,severe,Increased risk of bleeding and hemorrhage,Avoid combination or monitor INR closely
+Warfarin,Ibuprofen,severe,Increased risk of gastrointestinal bleeding,Avoid NSAIDs with anticoagulants
+Warfarin,Omeprazole,moderate,May increase warfarin effect and bleeding risk,Monitor INR when starting or stopping
+Warfarin,Metronidazole,severe,Significantly increases anticoagulant effect,Reduce warfarin dose and monitor INR
+Warfarin,Ciprofloxacin,severe,Increases warfarin effect and bleeding risk,Monitor INR closely
+Metformin,Alcohol,severe,Increased risk of lactic acidosis,Avoid excessive alcohol consumption
+Metformin,Ciprofloxacin,moderate,May cause blood sugar fluctuations,Monitor blood glucose closely
+Metformin,Furosemide,moderate,Furosemide may increase metformin levels,Monitor renal function and blood glucose
+Metformin,Nifedipine,mild,May increase metformin absorption,Usually clinically insignificant
+Amlodipine,Simvastatin,moderate,Increased risk of muscle damage (rhabdomyolysis),Limit simvastatin dose to 20mg daily
+Amlodipine,Atenolol,moderate,Enhanced blood pressure lowering and bradycardia,Monitor heart rate and blood pressure
+Atenolol,Salbutamol,moderate,Beta-blockers reduce bronchodilator effectiveness,Avoid non-selective beta-blockers in asthma
+Atenolol,Verapamil,severe,Risk of severe bradycardia and heart block,Avoid combination
+Atenolol,Nifedipine,moderate,Excessive blood pressure reduction,Monitor blood pressure
+Aspirin,Ibuprofen,moderate,Ibuprofen may reduce cardioprotective effect of aspirin,Take aspirin 30 min before ibuprofen
+Aspirin,Clopidogrel,moderate,Increased bleeding risk,Monitor for signs of bleeding
+Aspirin,Methotrexate,severe,Aspirin reduces methotrexate clearance causing toxicity,Avoid with high-dose methotrexate
+Ciprofloxacin,Antacid,moderate,Antacids reduce ciprofloxacin absorption significantly,Take ciprofloxacin 2 hours before antacid
+Ciprofloxacin,Theophylline,severe,Increased theophylline toxicity risk,Monitor theophylline levels
+Ciprofloxacin,Iron,moderate,Iron significantly reduces ciprofloxacin absorption,Separate doses by at least 2 hours
+Amoxicillin,Methotrexate,severe,Amoxicillin may increase methotrexate toxicity,Monitor methotrexate levels
+Amoxicillin,Warfarin,moderate,May increase anticoagulant effect,Monitor INR
+Omeprazole,Clopidogrel,severe,Omeprazole reduces clopidogrel effectiveness significantly,Use pantoprazole instead
+Omeprazole,Iron,moderate,Reduced iron absorption due to decreased stomach acid,Monitor iron levels
+Omeprazole,Diazepam,moderate,Omeprazole increases diazepam levels,Monitor for excessive sedation
+Diclofenac,Aspirin,moderate,Increased gastrointestinal bleeding risk,Avoid combination if possible
+Diclofenac,Lithium,severe,NSAIDs increase lithium levels causing toxicity,Monitor lithium levels closely
+Diclofenac,Methotrexate,severe,Increased methotrexate toxicity,Avoid with high-dose methotrexate
+Diclofenac,Furosemide,moderate,NSAIDs reduce diuretic effectiveness,Monitor blood pressure and renal function
+Paracetamol,Warfarin,moderate,Regular use may increase INR and bleeding risk,Monitor INR with regular paracetamol use
+Paracetamol,Alcohol,severe,Increased risk of liver damage,Avoid alcohol with regular paracetamol use
+Azithromycin,Warfarin,moderate,May increase anticoagulant effect,Monitor INR
+Azithromycin,Antacid,mild,Antacids may reduce azithromycin absorption slightly,Take azithromycin 1 hour before antacid
+Ceftriaxone,Calcium,severe,Risk of fatal precipitates in lungs and kidneys in neonates,Contraindicated in neonates with IV calcium
+Fluconazole,Warfarin,severe,Significantly increases warfarin levels,Reduce warfarin dose and monitor INR
+Fluconazole,Simvastatin,severe,Increased risk of rhabdomyolysis,Avoid combination
+Prednisolone,Aspirin,moderate,Increased risk of GI bleeding,Use gastroprotection
+Prednisolone,Diuretic,moderate,Enhanced potassium loss,Monitor potassium levels
+Losartan,Potassium,severe,Risk of dangerous hyperkalemia,Monitor potassium levels closely
+Losartan,Spironolactone,severe,High risk of hyperkalemia,Monitor potassium and renal function
+Losartan,Lithium,severe,Increased lithium levels and toxicity,Monitor lithium levels
+Enalapril,Potassium,severe,Risk of hyperkalemia,Avoid potassium supplements without monitoring
+Enalapril,Spironolactone,severe,High risk of hyperkalemia,Monitor potassium closely
+Enalapril,Lithium,severe,Increased lithium toxicity risk,Monitor lithium levels
+Digoxin,Amiodarone,severe,Amiodarone increases digoxin levels significantly,Reduce digoxin dose by 50%
+Digoxin,Verapamil,severe,Increased digoxin toxicity risk,Reduce digoxin dose and monitor levels
+Digoxin,Furosemide,moderate,Hypokalemia from furosemide increases digoxin toxicity,Monitor potassium levels
+Insulin,Atenolol,moderate,Beta-blockers mask hypoglycemia symptoms,Monitor blood glucose closely
+Insulin,Prednisolone,moderate,Corticosteroids raise blood glucose,May need insulin dose adjustment
+Salbutamol,Digoxin,moderate,Salbutamol may decrease digoxin levels,Monitor digoxin levels
+Isoniazid,Rifampicin,moderate,Combined hepatotoxicity risk,Monitor liver function tests
+Isoniazid,Paracetamol,moderate,Increased risk of hepatotoxicity,Limit paracetamol dose
+Rifampicin,Oral Contraceptive,severe,Rifampicin reduces contraceptive effectiveness,Use alternative contraception
+Phenytoin,Carbamazepine,moderate,Complex interaction affecting both drug levels,Monitor drug levels
+Phenytoin,Valproic Acid,moderate,Unpredictable changes in phenytoin levels,Monitor phenytoin levels closely
+Carbamazepine,Valproic Acid,moderate,Carbamazepine reduces valproic acid levels,Monitor valproic acid levels
+Carbamazepine,Oral Contraceptive,severe,Reduced contraceptive effectiveness,Use alternative contraception
+Gabapentin,Antacid,mild,Antacids reduce gabapentin absorption by 20%,Take gabapentin 2 hours after antacid
+Levetiracetam,Methotrexate,moderate,Possible reduced methotrexate clearance,Monitor methotrexate levels
+Donepezil,Atenolol,moderate,Enhanced bradycardia risk,Monitor heart rate
+Simvastatin,Amiodarone,severe,High risk of rhabdomyolysis,Limit simvastatin to 20mg
+Simvastatin,Grapefruit,moderate,Increased statin levels and muscle damage risk,Avoid grapefruit consumption
+Methotrexate,Trimethoprim,severe,Increased methotrexate toxicity and bone marrow suppression,Avoid combination
+Lithium,Furosemide,severe,Increased lithium levels and toxicity,Monitor lithium levels and renal function
+Lithium,Ibuprofen,severe,NSAIDs increase lithium levels,Avoid NSAIDs or monitor lithium closely
