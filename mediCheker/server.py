@@ -57,14 +57,13 @@ def scan_medicine():
 
     try:
         file.save(temp_path)
-        # Run EasyOCR extraction
         extracted_list = run_easyocr(temp_path)
         extracted_text = " ".join(extracted_list) if isinstance(extracted_list, list) else str(extracted_list)
+        display_text = " | ".join(extracted_list) if isinstance(extracted_list, list) else str(extracted_list)
 
-        # Lookup details using extracted text
         result_df = run_lookup(extracted_text)
         response_data = {
-            "extracted_text": extracted_text,
+            "extracted_text": display_text,
             "match_found": result_df is not None and not result_df.empty,
         }
 

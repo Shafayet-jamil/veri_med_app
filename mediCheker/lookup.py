@@ -29,16 +29,23 @@ def normalize_ma_number(ma_number: str) -> str:
 
 def extract_and_normalize_dar_ma_number(text: str) -> str | None:
 
-    dar_ma_pattern = r'(?:DAR|MA|DA|DR|AR)?[\s.:-]*(\d+[\s.:-]*\d+[\s.:-]*\d+)'
-    match = re.search(dar_ma_pattern, text, re.IGNORECASE)
+    # Try explicit DAR/MA label first (most reliable)
+    labeled = re.search(
+        r'(?:DAR|MA|D[A4]R|OAR)[\s.:\-]*(?:No\.?[\s.:\-]*)?'
+        r'(\d{2,4}[\s.:\-]+\d{2,5}[\s.:\-]+\d{2,5})',
+        text, re.IGNORECASE
+    )
+    if labeled:
+        raw = labeled.group(1)
+        standardized = re.sub(r'[\s.:]', '-', raw).strip('-')
+        return normalize_ma_number(standardized)
 
-    if match:
-        raw_number_part = match.group(1)
-        # Standardize separators to hyphens
-        standardized_part = re.sub(r'[\s.:]', '-', raw_number_part).strip()
+    # Fallback: any 3-part numeric pattern like 481-0003-034
+    unlabeled = re.search(r'(\d{2,4})[\s.:\-]+(\d{2,5})[\s.:\-]+(\d{2,5})', text)
+    if unlabeled:
+        parts = f"{unlabeled.group(1)}-{unlabeled.group(2)}-{unlabeled.group(3)}"
+        return normalize_ma_number(parts)
 
-
-        return normalize_ma_number(standardized_part)
     return None
 
 
