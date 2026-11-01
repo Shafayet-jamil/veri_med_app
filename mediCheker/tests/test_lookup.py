@@ -2,6 +2,7 @@ import pytest
 
 from lookup import (
     extract_and_normalize_dar_ma_number,
+    extract_mfg_licence_numbers,
     load_sheets,
     lookup_by_dar,
     normalize_ma_number,
@@ -86,3 +87,55 @@ def test_run_lookup_with_dar_only():
 
 def test_run_lookup_without_identifiers_is_empty():
     assert run_lookup("just some random label text").empty
+
+
+def test_dar_number_wins_over_a_conflicting_mfg_licence():
+    # DAR and MFG licence disagree (e.g. one misread): the DAR number names
+    # the exact medicine, so it must be used rather than the licence.
+    result = run_lookup(f"DAR No. {NAPA_DAR} Mfg. Lic. No. 999")
+    assert result.iloc[0]["DAR No"] == NAPA_DAR
+
+
+def test_mfg_licence_only_does_not_guess_a_product():
+    # Beximco makes hundreds of products: without a DAR number or a product
+    # name on the pack, only the manufacturer is returned.
+    row = run_lookup("Mfg. Lic. No. 379 tablets").iloc[0].to_dict()
+    assert row["Company"] == "Beximco Pharmaceuticals Ltd."
+    assert not row.get("DAR No")
+    assert not row.get("Trade Name")
+
+
+def test_mfg_licence_with_product_name_finds_that_product():
+    row = run_lookup("Napa Rapid Mfg. Lic. No. 379").iloc[0].to_dict()
+    assert row["Company"] == "Beximco Pharmaceuticals Ltd."
+    # Both "Napa" and "Napa Rapid" appear; the longest (most specific) wins.
+    assert row["Trade Name"] == "Napa Rapid"
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("MFG Lic. No. 379 & 119", ["379", "119"]),
+        ("Mfg: Lic: Nos, 273 & 501; MA No; 35341-022", ["273", "501"]),
+        ("MIG Lic No 379", ["379"]),                 # common OCR misread
+        # Regression (sample-5): the label must not reach past other words to
+        # take "301" from an unrelated 10-digit number.
+        ("MFG: Lic: No: MA No: tra Napa Extra 3010001904", []),
+        ("MFG Lic No 3010001904", []),
+        ("no licence here", []),
+    ],
+)
+def test_extract_mfg_licence_numbers(text, expected):
+    assert extract_mfg_licence_numbers(text) == expected
+
+
+def test_sample_5_text_does_not_name_the_wrong_manufacturer():
+    text = ("apa\" mg & racetamo 6009 Catteine 650096 MFG: Lic: No: MA No: tra "
+            "Napa Extra 3010001904 Paracetamol 500 mg Caffeine 65 mg ng 8 119 MA No.")
+    result = run_lookup(text)
+    assert result.empty or "Newtec" not in str(result.iloc[0].get("Company", ""))
+
+
+def test_sample_7_text_identifies_renata():
+    row = run_lookup("Mfg: Lic: Nos, 273 & 501; MA No; 35341-022").iloc[0].to_dict()
+    assert row["Company"] == "Renata PLC, Gazipur"

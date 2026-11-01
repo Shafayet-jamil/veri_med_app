@@ -244,6 +244,8 @@ class _ScanScreenState extends State<ScanScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          const _PhotoTips(),
+          const SizedBox(height: 14),
           if (_image != null) ...[
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
@@ -500,6 +502,66 @@ class _LookupScreenState extends State<LookupScreen> {
 
 // ─── Shared Widgets ──────────────────────────────────────────────────────────
 
+class _PhotoTips extends StatelessWidget {
+  const _PhotoTips();
+
+  static const _tips = [
+    'Show the side with the DAR / MA number and MFG licence number',
+    'Include the brand name and manufacturer if you can',
+    'Use good light, hold the phone steady and avoid glare on foil',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF6F8F7),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.tips_and_updates_outlined, size: 18, color: muted),
+              const SizedBox(width: 8),
+              Text(
+                'For the best result',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleSmall
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          for (final tip in _tips)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('•  ', style: TextStyle(color: muted)),
+                  Expanded(
+                    child: Text(
+                      tip,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: muted),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ErrorBanner extends StatelessWidget {
   const _ErrorBanner({required this.message});
   final String message;
@@ -573,6 +635,18 @@ class MedicineResultCard extends StatelessWidget {
       ('Address', Icons.location_on_outlined, _value('description')),
     ].where((field) => field.$3.isNotEmpty).toList();
     final notFound = result['match_found'] == false;
+    final manufacturerOnly = result['match_type'] == 'manufacturer';
+    final title = notFound
+        ? 'No matching record'
+        : manufacturerOnly
+            ? 'Manufacturer Found'
+            : 'Medicine Details';
+    final subtitle = notFound
+        ? null
+        : manufacturerOnly
+            ? 'The medicine itself was not identified: its DAR / MA number '
+                'was not readable.'
+            : 'From DGDA registration database';
 
     return Card(
       elevation: 0,
@@ -613,15 +687,15 @@ class MedicineResultCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        notFound ? 'No matching record' : 'Medicine Details',
+                        title,
                         style: Theme.of(context)
                             .textTheme
                             .titleLarge
                             ?.copyWith(fontWeight: FontWeight.w600),
                       ),
-                      if (!notFound)
+                      if (subtitle != null)
                         Text(
-                          'From DGDA registration database',
+                          subtitle,
                           style: Theme.of(context)
                               .textTheme
                               .bodySmall

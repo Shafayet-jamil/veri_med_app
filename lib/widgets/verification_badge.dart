@@ -15,7 +15,15 @@ class VerificationBadge extends StatelessWidget {
         verification['verdict_description']?.toString() ?? '';
     final checks = (verification['checks'] as List?)?.cast<Map<String, dynamic>>() ?? [];
     final matchedFields = (verification['matched_fields'] as num?)?.toInt() ?? 0;
+    final mismatchedFields =
+        (verification['mismatched_fields'] as num?)?.toInt() ?? 0;
     final totalFields = (verification['total_fields'] as num?)?.toInt() ?? 0;
+    final readFields =
+        (verification['read_fields'] as num?)?.toInt() ?? totalFields;
+    final notVisibleFields = totalFields - readFields;
+    // A percentage is only meaningful when at least two details were read;
+    // "100%" from a single readable detail would overstate the check.
+    final showScore = readFields >= 2;
 
     final color = _verdictColor(verdict);
     final icon = _verdictIcon(verdict);
@@ -49,6 +57,19 @@ class VerificationBadge extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 20),
+            if (!showScore)
+              Center(
+                child: Container(
+                  width: 96,
+                  height: 96,
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(icon, color: color, size: 48),
+                ),
+              )
+            else ...[
             Center(
               child: SizedBox(
                 width: 140,
@@ -79,6 +100,16 @@ class VerificationBadge extends StatelessWidget {
                 ),
               ),
             ),
+            const SizedBox(height: 4),
+            Center(
+              child: Text(
+                'of the readable details match',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ),
+            ],
             const SizedBox(height: 16),
             Center(
               child: Container(
@@ -120,7 +151,20 @@ class VerificationBadge extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Field comparison ($matchedFields of $totalFields matched)',
+                      'Field comparison',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      [
+                        '$matchedFields match',
+                        if (mismatchedFields > 0) '$mismatchedFields differ',
+                        if (notVisibleFields > 0)
+                          '$notVisibleFields not visible in photo',
+                      ].join(' · '),
                       style: Theme.of(context)
                           .textTheme
                           .titleSmall
@@ -146,24 +190,35 @@ class VerificationBadge extends StatelessWidget {
     final field = check['field']?.toString() ?? '';
     final extracted = check['extracted']?.toString() ?? '';
     final registered = check['registered']?.toString() ?? '';
-    final match = check['match'] == true;
+    final status = check['status']?.toString() ??
+        (check['match'] == true ? 'match' : 'mismatch');
+    final (statusIcon, statusColor) = switch (status) {
+      'match' => (Icons.check_circle, const Color(0xFF388E3C)),
+      'mismatch' => (Icons.cancel, const Color(0xFFD32F2F)),
+      _ => (Icons.visibility_off_outlined, const Color(0xFF9E9E9E)),
+    };
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(
-          match ? Icons.check_circle : Icons.cancel,
-          color: match ? const Color(0xFF388E3C) : const Color(0xFFD32F2F),
-          size: 20,
-        ),
+        Icon(statusIcon, color: statusColor, size: 20),
         const SizedBox(width: 10),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(field,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w600, fontSize: 13)),
+              Text(
+                switch (status) {
+                  'match' => field,
+                  'mismatch' => '$field: does not match',
+                  _ => '$field: not visible in photo',
+                },
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                  color: status == 'mismatch' ? statusColor : null,
+                ),
+              ),
               const SizedBox(height: 2),
               RichText(
                 text: TextSpan(
@@ -204,12 +259,16 @@ class VerificationBadge extends StatelessWidget {
     switch (verdict) {
       case 'likely_genuine':
         return const Color(0xFF2E7D32);
+      case 'partial_match':
+        return const Color(0xFF00796B);
+      case 'manufacturer_only':
+        return const Color(0xFF1565C0);
       case 'suspicious':
         return const Color(0xFFF57C00);
       case 'likely_counterfeit':
         return const Color(0xFFC62828);
       case 'no_record':
-        return const Color(0xFFD32F2F);
+        return const Color(0xFF6D4C41);
       default:
         return const Color(0xFF757575);
     }
@@ -219,6 +278,10 @@ class VerificationBadge extends StatelessWidget {
     switch (verdict) {
       case 'likely_genuine':
         return Icons.verified;
+      case 'partial_match':
+        return Icons.fact_check_outlined;
+      case 'manufacturer_only':
+        return Icons.factory_outlined;
       case 'suspicious':
         return Icons.warning_amber;
       case 'likely_counterfeit':
