@@ -18,14 +18,15 @@ def extract_3digit(value: str) -> str:
     return match.group(1) if match else str(value).strip()
 
 def normalize_ma_number(ma_number: str) -> str:
+    """Pad the middle part to 4 digits, as stored in the DGDA database.
 
-    tablet_pattern = re.compile(r'^(\d+)-(\d{3})-(\d+)$')
-    match = tablet_pattern.match(ma_number.strip())
+    Packages often drop leading zeros: "353-41-023" and "481-003-034" are
+    stored as "353-0041-023" and "481-0003-034".
+    """
+    match = re.match(r'^(\d+)-(\d{1,3})-(\d+)$', ma_number.strip())
     if match:
         prefix, middle, suffix = match.groups()
-        return f"{prefix}-0{middle}-{suffix}"
-
-
+        return f"{prefix}-{middle.zfill(4)}-{suffix}"
     return ma_number
 
 def extract_and_normalize_dar_ma_number(text: str) -> str | None:

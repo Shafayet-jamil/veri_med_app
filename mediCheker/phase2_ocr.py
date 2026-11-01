@@ -6,6 +6,8 @@ import re
 import tempfile
 import threading
 
+from lookup import normalize_ma_number
+
 
 # Reusable reader — EasyOCR model loading is expensive (~2-4 s), so we do it once.
 _reader = None
@@ -205,17 +207,6 @@ def _deduplicate(texts: list[str]) -> list[str]:
             result.append(text)
             seen_lower.append(t)
     return result
-
-
-# ── MA number normalization ──────────────────────────────────────────────────
-
-def normalize_ma_number(ma_number: str) -> str:
-    tablet_pattern = re.compile(r'^(\d+)-(\d{3})-(\d+)$')
-    match = tablet_pattern.match(ma_number.strip())
-    if match:
-        prefix, middle, suffix = match.groups()
-        return f"{prefix}-0{middle}-{suffix}"
-    return ma_number
 
 
 # ── Multi-strategy OCR runner ────────────────────────────────────────────────

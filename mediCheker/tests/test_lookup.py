@@ -17,6 +17,8 @@ NAPA_DAR = "186-0479-006"
     "raw, expected",
     [
         ("481-003-034", "481-0003-034"),   # 3-digit middle part gets padded
+        ("353-41-023", "353-0041-023"),    # so does a 2-digit one
+        ("12-5-001", "12-0005-001"),
         ("481-0003-034", "481-0003-034"),  # already normalized
         ("ABC", "ABC"),                     # not an MA number: unchanged
     ],
@@ -68,6 +70,13 @@ def test_run_lookup_with_dar_and_mfg_licence():
     assert row["DAR No"] == NAPA_DAR
     assert row["Company"] == "Beximco Pharmaceuticals Ltd."
     assert row["MFG Lic (Non-Biological)"] == "379"
+
+
+def test_run_lookup_with_short_printed_number():
+    # Printed on Furoclav 500 packs as "MA No. 353-41-023".
+    result = run_lookup("Furoclav 500 MA No. 353-41-023 Antibiotic")
+    assert result.iloc[0]["DAR No"] == "353-0041-023"
+    assert result.iloc[0]["Trade Name"] == "Furoclav 500"
 
 
 def test_run_lookup_with_dar_only():
