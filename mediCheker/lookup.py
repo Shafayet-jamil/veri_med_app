@@ -1,6 +1,7 @@
 import pandas as pd
 import re
 import os
+from functools import lru_cache
 
 # ── File paths ──────────────────────────────────────────────────────────────
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -49,8 +50,13 @@ def extract_and_normalize_dar_ma_number(text: str) -> str | None:
     return None
 
 
+@lru_cache(maxsize=1)
 def load_sheets() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load the medicine and company sheets.
 
+    The result is cached, so the CSV files are read only once per process.
+    Callers must treat the returned DataFrames as read-only.
+    """
     med_df = pd.read_csv(MEDICINE_CSV, dtype=str).fillna("")
     cmp_df = pd.read_csv(COMPANY_CSV,  dtype=str).fillna("")
 
@@ -90,7 +96,7 @@ def lookup_by_dar(dar_query: str,
 
 
     merged = med_rows.merge(
-        cmp_df[["Company", "_company_key", "Address", "Bio_3", "NonBio_3", "Validity", "Status"]].drop_duplicates(subset=["_company_key"]),
+        cmp_df[["_company_key", "Address", "Bio_3", "NonBio_3", "Validity", "Status"]].drop_duplicates(subset=["_company_key"]),
         on="_company_key",
         how="left"
     )
@@ -204,7 +210,7 @@ def run_lookup(ocr_text: str) -> pd.DataFrame:
             if not med_rows_for_company.empty:
                 single_med_row = med_rows_for_company.iloc[0:1].copy()
                 final_result_for_display = single_med_row.merge(
-                    first_matched_company[["Company", "_company_key", "Address", "Bio_3", "NonBio_3", "Validity", "Status"]],
+                    first_matched_company[["_company_key", "Address", "Bio_3", "NonBio_3", "Validity", "Status"]],
                     on="_company_key",
                     how="left"
                 )
