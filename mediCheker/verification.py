@@ -1,121 +1,165 @@
+"""Compare the text read from a medicine package with its DGDA record.
+
+Every check ends in one of three states:
+
+- ``match``        the detail was read and agrees with the record
+- ``mismatch``     the detail was read and contradicts the record
+- ``not_visible``  the detail could not be found in the OCR text
+
+Only details that were actually read count towards the score. A detail that
+is missing from a photo (cropped, blurry, on the other side of the pack) is
+not evidence that the medicine is fake, so it never lowers the score.
+"""
 import re
-import pandas as pd
-from lookup import load_sheets, lookup_by_dar, extract_and_normalize_dar_ma_number
+
+from lookup import extract_and_normalize_dar_ma_number
+
+MATCH = "match"
+MISMATCH = "mismatch"
+NOT_VISIBLE = "not_visible"
+
+_MFG_PATTERN = re.compile(
+    r'(?:mfg|mig)[\s.:]*lic[\s.:]*no[^\d]*((?:\d{3})(?:\s*&\s*\d{3})*)',
+    re.IGNORECASE,
+)
+_STRENGTH = re.compile(r'\d+(\.\d+)?\s*(mg|gm|ml|mcg|iu).*', re.IGNORECASE)
+
+PHOTO_TIP = ("For a fuller check, photograph the side of the pack that shows "
+             "the brand name, the DAR / MA number and the MFG licence number, "
+             "in good light.")
+
+
+def _get(row: dict, *keys: str) -> str:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and str(value).strip() and str(value).lower() != "nan":
+            return str(value).strip()
+    return ""
+
+
+def _check(field, status, extracted, registered, weight):
+    return {
+        "field": field,
+        "status": status,
+        "match": status == MATCH,
+        "extracted": extracted if status != NOT_VISIBLE else "(not visible)",
+        "registered": registered,
+        "weight": weight,
+    }
+
+
+def _find_in_text(ocr_lower: str, target: str) -> str:
+    idx = ocr_lower.find(target)
+    return ocr_lower[idx:idx + len(target)] if idx >= 0 else ""
 
 
 def compute_verification(extracted_text: str, db_row: dict) -> dict:
     checks = []
     ocr_lower = extracted_text.lower()
 
-    dar_extracted = extract_and_normalize_dar_ma_number(extracted_text)
-    dar_db = (db_row.get("DAR No") or db_row.get("dar_number") or "").strip()
-    if dar_extracted and dar_db:
-        match = dar_extracted.strip() == dar_db.strip()
-        checks.append({
-            "field": "DAR / MA Number",
-            "extracted": dar_extracted,
-            "registered": dar_db,
-            "match": match,
-            "weight": 30,
-        })
-
-    trade_db = (db_row.get("Trade Name") or db_row.get("brand_name") or "").strip()
-    if trade_db:
-        found = trade_db.lower() in ocr_lower
-        checks.append({
-            "field": "Brand / Trade Name",
-            "extracted": _find_in_text(ocr_lower, trade_db.lower()),
-            "registered": trade_db,
-            "match": found,
-            "weight": 20,
-        })
-
-    company_db = (db_row.get("Company") or db_row.get("manufacturer") or "").strip()
-    if company_db:
-        company_words = [w for w in company_db.lower().split() if len(w) > 2]
-        matched_words = sum(1 for w in company_words if w in ocr_lower)
-        found = matched_words >= max(1, len(company_words) // 2)
-        checks.append({
-            "field": "Manufacturer",
-            "extracted": _find_in_text(ocr_lower, company_db.lower()),
-            "registered": company_db,
-            "match": found,
-            "weight": 20,
-        })
-
-    generic_db = (db_row.get("Generic Name With Strength") or
-                  db_row.get("generic_name") or "").strip()
-    if generic_db:
-        base_generic = re.sub(r'\d+(\.\d+)?\s*(mg|gm|ml|mcg|iu).*', '',
-                              generic_db, flags=re.IGNORECASE).strip().lower()
-        if base_generic:
-            found = base_generic in ocr_lower
-            checks.append({
-                "field": "Generic Name",
-                "extracted": _find_in_text(ocr_lower, base_generic),
-                "registered": generic_db,
-                "match": found,
-                "weight": 15,
-            })
-
-    mfg_pattern = r'(?:mfg|mig)[\s.:]*lic[\s.:]*no[^\d]*((?:\d{3})(?:\s*&\s*\d{3})*)'
-    mfg_match = re.search(mfg_pattern, extracted_text, re.IGNORECASE)
-    bio_db = (db_row.get("Bio_3") or db_row.get("MFG Lic (Biological)") or
-              db_row.get("mfg_license_biological") or "").strip()
-    nonbio_db = (db_row.get("NonBio_3") or db_row.get("MFG Lic (Non-Biological)") or
-                 db_row.get("mfg_license_non_biological") or "").strip()
-    if mfg_match and (bio_db or nonbio_db):
-        extracted_mfg = re.findall(r'\d{3}', mfg_match.group(1))
-        db_mfg_set = set()
-        if bio_db:
-            db_mfg_set.add(bio_db)
-        if nonbio_db:
-            db_mfg_set.add(nonbio_db)
-        found = bool(set(extracted_mfg) & db_mfg_set)
-        checks.append({
-            "field": "MFG License Number",
-            "extracted": ", ".join(extracted_mfg),
-            "registered": ", ".join(sorted(db_mfg_set)),
-            "match": found,
-            "weight": 15,
-        })
-
-    total_weight = sum(c["weight"] for c in checks)
-    matched_weight = sum(c["weight"] for c in checks if c["match"])
-
-    if total_weight == 0:
-        score = 0
-        verdict = "unverifiable"
-        verdict_label = "Cannot Verify"
-        verdict_description = "Not enough information extracted from the image to verify."
-    else:
-        score = round((matched_weight / total_weight) * 100)
-        if score >= 80:
-            verdict = "likely_genuine"
-            verdict_label = "Likely Genuine"
-            verdict_description = "Most extracted fields match the official DGDA registration record."
-        elif score >= 50:
-            verdict = "suspicious"
-            verdict_label = "Suspicious"
-            verdict_description = "Some fields do not match the registered record. Verify manually."
+    # DAR / MA number: identifies the exact medicine.
+    dar_db = _get(db_row, "DAR No", "dar_number")
+    if dar_db:
+        dar_read = extract_and_normalize_dar_ma_number(extracted_text)
+        if not dar_read:
+            status = NOT_VISIBLE
         else:
-            verdict = "likely_counterfeit"
-            verdict_label = "Likely Counterfeit"
-            verdict_description = "Significant mismatches with the official registration record."
+            status = MATCH if dar_read == dar_db else MISMATCH
+        checks.append(_check("DAR / MA Number", status, dar_read or "", dar_db, 30))
+
+    # Brand, manufacturer and generic name: we can only tell whether the
+    # registered text appears on the pack, so these are match / not visible.
+    trade_db = _get(db_row, "Trade Name", "brand_name")
+    if trade_db:
+        found = _find_in_text(ocr_lower, trade_db.lower())
+        checks.append(_check("Brand / Trade Name", MATCH if found else NOT_VISIBLE,
+                             found, trade_db, 20))
+
+    company_db = _get(db_row, "Company", "manufacturer")
+    if company_db:
+        words = [w for w in company_db.lower().split() if len(w) > 2]
+        matched_words = [w for w in words if w in ocr_lower]
+        found = len(matched_words) >= max(1, len(words) // 2)
+        checks.append(_check("Manufacturer", MATCH if found else NOT_VISIBLE,
+                             " ".join(matched_words), company_db, 20))
+
+    generic_db = _get(db_row, "Generic Name With Strength", "generic_name")
+    base_generic = _STRENGTH.sub('', generic_db).strip().lower()
+    if base_generic:
+        found = _find_in_text(ocr_lower, base_generic)
+        checks.append(_check("Generic Name", MATCH if found else NOT_VISIBLE,
+                             found, generic_db, 15))
+
+    # MFG licence number: identifies the manufacturer.
+    licences_db = {
+        v for v in (
+            _get(db_row, "Bio_3", "MFG Lic (Biological)", "mfg_license_biological"),
+            _get(db_row, "NonBio_3", "MFG Lic (Non-Biological)", "mfg_license_non_biological"),
+        ) if v
+    }
+    if licences_db:
+        mfg_match = _MFG_PATTERN.search(extracted_text)
+        licences_read = re.findall(r'\d{3}', mfg_match.group(1)) if mfg_match else []
+        if not licences_read:
+            status = NOT_VISIBLE
+        else:
+            status = MATCH if set(licences_read) & licences_db else MISMATCH
+        checks.append(_check("MFG License Number", status, ", ".join(licences_read),
+                             ", ".join(sorted(licences_db)), 15))
+
+    return _summarize(checks, is_medicine_record=bool(dar_db or trade_db),
+                      company=company_db)
+
+
+def _summarize(checks: list[dict], is_medicine_record: bool, company: str) -> dict:
+    read = [c for c in checks if c["status"] != NOT_VISIBLE]
+    matched = [c for c in read if c["status"] == MATCH]
+    mismatched = [c for c in read if c["status"] == MISMATCH]
+
+    read_weight = sum(c["weight"] for c in read)
+    score = round(sum(c["weight"] for c in matched) / read_weight * 100) if read_weight else 0
+
+    def names(items):
+        labels = [c["field"] for c in items]
+        return labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
+
+    if not read:
+        verdict, label = "unverifiable", "Cannot Verify"
+        description = ("A registration record was found, but none of its details "
+                       "could be read clearly on the package. " + PHOTO_TIP)
+    elif mismatched:
+        if score >= 50:
+            verdict, label = "suspicious", "Some Details Differ"
+        else:
+            verdict, label = "likely_counterfeit", "Details Do Not Match"
+        description = (f"The {names(mismatched)} on the package "
+                       f"{'does' if len(mismatched) == 1 else 'do'} not match the "
+                       f"official DGDA record. Check the medicine with a pharmacist "
+                       f"before using it.")
+    elif not is_medicine_record:
+        verdict, label = "manufacturer_only", "Manufacturer Identified"
+        description = (f"The package matches the registered manufacturer "
+                       f"{company}, but its DAR / MA number could not be read, so "
+                       f"the medicine itself was not checked. " + PHOTO_TIP)
+    elif len(matched) >= 2:
+        verdict, label = "likely_genuine", "Matches DGDA Record"
+        description = (f"{len(matched)} details read from the package match the "
+                       f"official DGDA registration: {names(matched)}. "
+                       f"No conflicting details were found.")
+    else:
+        verdict, label = "partial_match", "Registered, Partly Checked"
+        description = (f"The {names(matched)} matches a registered medicine and "
+                       f"nothing on the package contradicts it, but the other "
+                       f"details could not be read. " + PHOTO_TIP)
 
     return {
         "verification_score": score,
         "verdict": verdict,
-        "verdict_label": verdict_label,
-        "verdict_description": verdict_description,
+        "verdict_label": label,
+        "verdict_description": description,
         "checks": checks,
-        "matched_fields": sum(1 for c in checks if c["match"]),
+        "matched_fields": len(matched),
+        "mismatched_fields": len(mismatched),
+        "read_fields": len(read),
         "total_fields": len(checks),
     }
-
-
-def _find_in_text(ocr_lower: str, target: str) -> str:
-    idx = ocr_lower.find(target)
-    if idx >= 0:
-        return ocr_lower[idx:idx + len(target)]
-    return "(not found)"

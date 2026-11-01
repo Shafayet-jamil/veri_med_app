@@ -54,6 +54,14 @@ def test_verify_license_accepts_json_body(client):
     assert response.get_json()["brand_name"] == "Napa"
 
 
+def test_verify_license_accepts_short_printed_number(client):
+    response = client.get("/verify-license?dar_number=353-41-023")
+    body = response.get_json()
+    assert response.status_code == 200
+    assert body["brand_name"] == "Furoclav 500"
+    assert body["dar_number"] == "353-0041-023"   # the registered form
+
+
 def test_verify_license_not_found(client):
     response = client.get("/verify-license?dar_number=000-0000-000")
     assert response.status_code == 404
@@ -83,8 +91,31 @@ def test_scan_genuine_label(client, fake_ocr):
     assert body["match_found"] is True
     assert body["dar_number"] == NAPA_DAR
     assert body["manufacturer"] == "Beximco Pharmaceuticals Ltd."
+    assert body["match_type"] == "medicine"
     assert body["verification"]["verdict"] == "likely_genuine"
     assert "Napa | Paracetamol 500 mg" in body["extracted_text"]
+
+
+def test_scan_partial_label_is_not_called_counterfeit(client, fake_ocr):
+    # Real case (sample-10): only "MA No. 353-41-023" is readable.
+    fake_ocr(["MA No. 353-41-023", "Antibiotic"])
+    body = client.post("/scan-medicine", data=image_upload(),
+                       content_type="multipart/form-data").get_json()
+
+    assert body["brand_name"] == "Furoclav 500"
+    assert body["dar_number"] == "353-0041-023"
+    assert body["verification"]["verdict"] == "partial_match"
+
+
+def test_scan_manufacturer_only(client, fake_ocr):
+    fake_ocr(["Mfg. Lic. No. 379"])
+    body = client.post("/scan-medicine", data=image_upload(),
+                       content_type="multipart/form-data").get_json()
+
+    assert body["match_type"] == "manufacturer"
+    assert body["manufacturer"] == "Beximco Pharmaceuticals Ltd."
+    assert body["brand_name"] == ""
+    assert body["verification"]["verdict"] == "manufacturer_only"
 
 
 def test_scan_unreadable_label(client, fake_ocr):
@@ -95,7 +126,9 @@ def test_scan_unreadable_label(client, fake_ocr):
 
     assert response.status_code == 200
     assert body["match_found"] is False
+    assert body["match_type"] == "none"
     assert body["verification"]["verdict"] == "no_record"
+    assert "Lookup tab" in body["verification"]["verdict_description"]
 
 
 def test_scan_removes_temp_file(client, monkeypatch):

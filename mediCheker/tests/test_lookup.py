@@ -86,3 +86,26 @@ def test_run_lookup_with_dar_only():
 
 def test_run_lookup_without_identifiers_is_empty():
     assert run_lookup("just some random label text").empty
+
+
+def test_dar_number_wins_over_a_conflicting_mfg_licence():
+    # DAR and MFG licence disagree (e.g. one misread): the DAR number names
+    # the exact medicine, so it must be used rather than the licence.
+    result = run_lookup(f"DAR No. {NAPA_DAR} Mfg. Lic. No. 999")
+    assert result.iloc[0]["DAR No"] == NAPA_DAR
+
+
+def test_mfg_licence_only_does_not_guess_a_product():
+    # Beximco makes hundreds of products: without a DAR number or a product
+    # name on the pack, only the manufacturer is returned.
+    row = run_lookup("Mfg. Lic. No. 379 tablets").iloc[0].to_dict()
+    assert row["Company"] == "Beximco Pharmaceuticals Ltd."
+    assert not row.get("DAR No")
+    assert not row.get("Trade Name")
+
+
+def test_mfg_licence_with_product_name_finds_that_product():
+    row = run_lookup("Napa Rapid Mfg. Lic. No. 379").iloc[0].to_dict()
+    assert row["Company"] == "Beximco Pharmaceuticals Ltd."
+    # Both "Napa" and "Napa Rapid" appear; the longest (most specific) wins.
+    assert row["Trade Name"] == "Napa Rapid"

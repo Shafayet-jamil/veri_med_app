@@ -156,6 +156,20 @@ def display_result(result: pd.DataFrame, label: str = "Result") -> None:
     print(f"{'═' * 80}\n")
 
 
+def _product_named_in_text(med_rows: pd.DataFrame, text: str) -> pd.DataFrame | None:
+    """The product (one row) whose trade name appears in ``text`` as whole
+    word(s), preferring the longest name ("Napa Extra" over "Napa")."""
+    text_lower = text.lower()
+    best, best_len = None, 0
+    for idx, name in med_rows["Trade Name"].items():
+        name = str(name).strip().lower()
+        if len(name) < 3 or len(name) <= best_len:
+            continue
+        if re.search(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])", text_lower):
+            best, best_len = idx, len(name)
+    return None if best is None else med_rows.loc[[best]].copy()
+
+
 def run_lookup(ocr_text: str) -> pd.DataFrame:
 
     med_df, cmp_df = load_sheets()
@@ -196,35 +210,8 @@ def run_lookup(ocr_text: str) -> pd.DataFrame:
         else:
             print(f"[!] DAR/MA No '{extracted_dar_number}' did not yield any initial results for combined lookup.")
 
-    if extracted_mfg_numbers and not found_match:
-        print(f"[*] MFG Lic No(s) ({', '.join(extracted_mfg_numbers)}) found. Attempting MFG Lic No only lookup.")
-        matched_companies_raw = find_companies_by_mfg_no(extracted_mfg_numbers, cmp_df)
-
-        if not matched_companies_raw.empty:
-            first_matched_company = matched_companies_raw.iloc[0:1].copy()
-            company_key_to_search = first_matched_company["_company_key"].iloc[0]
-
-            print(f"[*] Limiting output to the first matched company: '{first_matched_company['Company'].iloc[0]}'")
-
-            med_rows_for_company = med_df[med_df["_company_key"] == company_key_to_search].copy()
-
-            if not med_rows_for_company.empty:
-                single_med_row = med_rows_for_company.iloc[0:1].copy()
-                final_result_for_display = single_med_row.merge(
-                    first_matched_company[["_company_key", "Address", "Bio_3", "NonBio_3", "Validity", "Status"]],
-                    on="_company_key",
-                    how="left"
-                )
-            else:
-                final_result_for_display = first_matched_company.copy()
-
-            final_result_for_display = prepare_for_display(final_result_for_display)
-            display_result(final_result_for_display, label=f"MFG Lic Lookup (First Match for {', '.join(extracted_mfg_numbers)})")
-            found_match = True
-        else:
-            print(f"[!] No company records found for MFG License Numbers: {', '.join(extracted_mfg_numbers)}.")
-
-
+    # The DAR/MA number identifies one medicine, so it is tried before the
+    # MFG licence number, which only identifies the manufacturer.
     if extracted_dar_number and not found_match:
         print(f"[*] DAR/MA No ({extracted_dar_number}) found. Attempting DAR/MA No only lookup.")
         dar_result = lookup_by_dar(extracted_dar_number, med_df, cmp_df)
@@ -235,6 +222,36 @@ def run_lookup(ocr_text: str) -> pd.DataFrame:
             found_match = True
         else:
             print(f"[!] No medicine records found for DAR/MA No: '{extracted_dar_number}'.")
+
+    if extracted_mfg_numbers and not found_match:
+        print(f"[*] MFG Lic No(s) ({', '.join(extracted_mfg_numbers)}) found. Attempting MFG Lic No only lookup.")
+        matched_companies_raw = find_companies_by_mfg_no(extracted_mfg_numbers, cmp_df)
+
+        if not matched_companies_raw.empty:
+            first_matched_company = matched_companies_raw.iloc[0:1].copy()
+            company_key_to_search = first_matched_company["_company_key"].iloc[0]
+
+            print(f"[*] Limiting output to the first matched company: '{first_matched_company['Company'].iloc[0]}'")
+
+            med_rows_for_company = med_df[med_df["_company_key"] == company_key_to_search]
+            product = _product_named_in_text(med_rows_for_company, query)
+
+            if product is not None:
+                final_result_for_display = product.merge(
+                    first_matched_company[["_company_key", "Address", "Bio_3", "NonBio_3", "Validity", "Status"]],
+                    on="_company_key",
+                    how="left"
+                )
+            else:
+                # Only the manufacturer is known. Don't guess which of its
+                # products this is: return the company record alone.
+                final_result_for_display = first_matched_company.copy()
+
+            final_result_for_display = prepare_for_display(final_result_for_display)
+            display_result(final_result_for_display, label=f"MFG Lic Lookup (First Match for {', '.join(extracted_mfg_numbers)})")
+            found_match = True
+        else:
+            print(f"[!] No company records found for MFG License Numbers: {', '.join(extracted_mfg_numbers)}.")
 
     if not found_match:
         print(f"[!] No relevant identifiers (MFG Lic No or DAR/MA No) found or matched for: '{query}'")

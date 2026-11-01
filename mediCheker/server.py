@@ -54,7 +54,7 @@ interactions_df = load_interactions()
 def medicine_details(row, dar_number=None):
     return {
         "match_found": True,
-        "dar_number": dar_number or row.get("DAR No", ""),
+        "dar_number": row.get("DAR No") or dar_number or "",
         "brand_name": row.get("Trade Name") or row.get("Brand Name") or "",
         "generic_name": row.get("Generic Name With Strength") or row.get("Generic Name") or "",
         "manufacturer": row.get("Company") or row.get("Manufacturer") or "",
@@ -163,17 +163,30 @@ def scan_medicine():
         if result_df is not None and not result_df.empty:
             row_dict = result_df.iloc[0].to_dict()
             response_data.update(medicine_details(row_dict))
+            # "manufacturer": only the MFG licence number was recognised, so
+            # the record describes the company, not a specific medicine.
+            response_data["match_type"] = "medicine" if row_dict.get("DAR No") else "manufacturer"
             verification = compute_verification(extracted_text, row_dict)
             response_data["verification"] = verification
         else:
+            response_data["match_type"] = "none"
             response_data["status"] = "No matching record"
             response_data["verification"] = {
                 "verification_score": 0,
                 "verdict": "no_record",
-                "verdict_label": "No Record Found",
-                "verdict_description": "No matching medicine found in the DGDA database.",
+                "verdict_label": "Not Found in DGDA Records",
+                "verdict_description": (
+                    "No DAR / MA number or MFG licence number on the package "
+                    "matched the DGDA database. The numbers may not have been "
+                    "readable in this photo: try a clearer photo, or type the "
+                    "DAR / MA number in the Lookup tab. If the number is "
+                    "readable and still not found, the medicine may not be "
+                    "registered."
+                ),
                 "checks": [],
                 "matched_fields": 0,
+                "mismatched_fields": 0,
+                "read_fields": 0,
                 "total_fields": 0,
             }
 
