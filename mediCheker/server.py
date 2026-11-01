@@ -6,6 +6,7 @@ from flask import Flask, request, jsonify
 from lookup import run_lookup, lookup_by_dar, load_sheets
 from phase2_ocr import run_easyocr
 from interactions import load_interactions, load_medicine_names, check_interactions
+from verification import compute_verification
 
 app = Flask(__name__)
 
@@ -68,9 +69,21 @@ def scan_medicine():
         }
 
         if result_df is not None and not result_df.empty:
-            response_data.update(medicine_details(result_df.iloc[0].to_dict()))
+            row_dict = result_df.iloc[0].to_dict()
+            response_data.update(medicine_details(row_dict))
+            verification = compute_verification(extracted_text, row_dict)
+            response_data["verification"] = verification
         else:
             response_data["status"] = "No matching record"
+            response_data["verification"] = {
+                "verification_score": 0,
+                "verdict": "no_record",
+                "verdict_label": "No Record Found",
+                "verdict_description": "No matching medicine found in the DGDA database.",
+                "checks": [],
+                "matched_fields": 0,
+                "total_fields": 0,
+            }
 
         return jsonify(response_data)
 
