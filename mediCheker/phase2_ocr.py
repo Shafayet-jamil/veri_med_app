@@ -6,7 +6,7 @@ import re
 import tempfile
 import threading
 
-from lookup import normalize_ma_number
+from lookup import MFG_LICENCE_PATTERN, normalize_ma_number
 
 
 # Reusable reader — EasyOCR model loading is expensive (~2-4 s), so we do it once.
@@ -238,14 +238,13 @@ _DAR_LABELLED = re.compile(
     r'\b(?:DAR|MA)[\s.:\-]*(?:No\.?[\s.:\-]*)?\d{2,4}[\s.:\-]+\d{2,5}[\s.:\-]+\d{2,5}',
     re.IGNORECASE,
 )
-_MFG_LICENCE = re.compile(r'(?:mfg|mig)[\s.:]*lic[\s.:]*no[^\d]*\d{3}', re.IGNORECASE)
 
 
 def _has_key_identifiers(results):
     """True when the text already holds a labelled DAR/MA number and an MFG
     licence number: everything the database lookup needs."""
     text = _fix_ocr_errors(" ".join(_clean_text(t) for _, t, _ in results))
-    return bool(_DAR_LABELLED.search(text) and _MFG_LICENCE.search(text))
+    return bool(_DAR_LABELLED.search(text) and MFG_LICENCE_PATTERN.search(text))
 
 
 def _score_results(results):

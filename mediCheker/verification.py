@@ -12,16 +12,12 @@ not evidence that the medicine is fake, so it never lowers the score.
 """
 import re
 
-from lookup import extract_and_normalize_dar_ma_number
+from lookup import extract_and_normalize_dar_ma_number, extract_mfg_licence_numbers
 
 MATCH = "match"
 MISMATCH = "mismatch"
 NOT_VISIBLE = "not_visible"
 
-_MFG_PATTERN = re.compile(
-    r'(?:mfg|mig)[\s.:]*lic[\s.:]*no[^\d]*((?:\d{3})(?:\s*&\s*\d{3})*)',
-    re.IGNORECASE,
-)
 _STRENGTH = re.compile(r'\d+(\.\d+)?\s*(mg|gm|ml|mcg|iu).*', re.IGNORECASE)
 
 PHOTO_TIP = ("For a fuller check, photograph the side of the pack that shows "
@@ -98,8 +94,7 @@ def compute_verification(extracted_text: str, db_row: dict) -> dict:
         ) if v
     }
     if licences_db:
-        mfg_match = _MFG_PATTERN.search(extracted_text)
-        licences_read = re.findall(r'\d{3}', mfg_match.group(1)) if mfg_match else []
+        licences_read = extract_mfg_licence_numbers(extracted_text)
         if not licences_read:
             status = NOT_VISIBLE
         else:

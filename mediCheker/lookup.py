@@ -9,6 +9,22 @@ MEDICINE_CSV = os.path.join(BACKEND_DIR, "excelFile", "medicine_information_DAR_
 COMPANY_CSV = os.path.join(BACKEND_DIR, "excelFile", "Company Info functionalOrNonFunctional.csv")
 
 
+# "MFG Lic No. 379 & 119": one or more 3-digit manufacturer licence numbers.
+# Each number must stand alone (not the start of a longer number), and it must
+# follow the label closely, so the label cannot skip over unrelated text to
+# pick digits out of e.g. a batch or barcode number further along.
+MFG_LICENCE_PATTERN = re.compile(
+    r'(?:mfg|mig)[\s.:]*lic[\s.:]*nos?[^\d]{0,10}'
+    r'(\d{3}(?!\d)(?:\s*&\s*\d{3}(?!\d))*)',
+    re.IGNORECASE,
+)
+
+
+def extract_mfg_licence_numbers(text: str) -> list[str]:
+    match = MFG_LICENCE_PATTERN.search(text)
+    return re.findall(r'\d{3}', match.group(1)) if match else []
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 def extract_3digit(value: str) -> str:
 
@@ -177,13 +193,7 @@ def run_lookup(ocr_text: str) -> pd.DataFrame:
 
     print(f"\n[*] OCR input received: '{query}'")
 
-    extracted_mfg_numbers = []
-    mfg_pattern = r'(?:mfg|mig)[\s.:]*lic[\s.:]*no[^\d]*((?:\d{3})(?:\s*&\s*\d{3})*)'
-    mfg_match = re.search(mfg_pattern, query, re.IGNORECASE)
-
-    if mfg_match:
-        numbers_block = mfg_match.group(1)
-        extracted_mfg_numbers = re.findall(r'\d{3}', numbers_block)
+    extracted_mfg_numbers = extract_mfg_licence_numbers(query)
 
     extracted_dar_number = extract_and_normalize_dar_ma_number(query)
 
