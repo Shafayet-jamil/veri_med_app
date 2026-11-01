@@ -14,6 +14,9 @@ def client(monkeypatch):
     # Defaults for every test: no API key, no scan limit.
     monkeypatch.setattr(server, "API_KEY", "")
     monkeypatch.setattr(server, "scan_limiter", server._RateLimiter(0))
+    # Curated interaction list only, whether or not DDInter is downloaded.
+    monkeypatch.setattr(server, "interactions_df",
+                        server.load_interactions(ddinter_path=None))
     with server.app.test_client() as client:
         yield client
 
@@ -239,6 +242,8 @@ def test_check_interactions(client):
     assert response.status_code == 200
     assert body["interactions_found"] is True
     assert body["interaction_count"] == 1
+    assert body["interactions"][0]["source"] == "MediChecker curated list"
+    assert [s["name"] for s in body["sources"]] == ["MediChecker curated list"]
 
 
 @pytest.mark.parametrize("payload", [

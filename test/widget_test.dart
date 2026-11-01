@@ -16,6 +16,31 @@ MedicineApi fakeApi() {
         '/medicine-names' => {
             'medicines': [
               {'trade_name': 'Napa', 'generic_name': 'Paracetamol'},
+              {'trade_name': 'Sergel', 'generic_name': 'Esomeprazole'},
+              {'trade_name': 'Clopid', 'generic_name': 'Clopidogrel'},
+            ],
+          },
+        '/check-interactions' => {
+            'interactions_found': true,
+            'interaction_count': 1,
+            'interactions': [
+              {
+                'drug_a': 'Esomeprazole',
+                'drug_b': 'Clopidogrel',
+                'severity': 'severe',
+                'effect': 'DDInter lists an interaction between these drugs '
+                    '(severity: Major).',
+                'recommendation':
+                    'Avoid this combination unless a doctor has approved it.',
+                'source': 'DDInter',
+              },
+            ],
+            'sources': [
+              {
+                'name': 'DDInter',
+                'license': 'CC BY-NC-SA 4.0 (non-commercial use only)',
+                'url': 'https://ddinter.scbdd.com/',
+              },
             ],
           },
         '/verify-license' => {
@@ -234,5 +259,45 @@ void main() {
     expect(find.text('85%'), findsOneWidget);
     expect(find.text('4 match · 1 differ'), findsOneWidget);
     expect(find.text('MFG License Number: does not match'), findsOneWidget);
+  });
+
+  testWidgets('interaction check shows severity, source and attribution', (
+    tester,
+  ) async {
+    await tester.pumpWidget(MediCheckerApp(api: fakeApi()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Interactions'));
+    await tester.pumpAndSettle();
+
+    final search = find.byType(TextField).last;
+    await tester.enterText(search, 'Serg');
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Sergel'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sergel'));
+    await tester.pumpAndSettle();
+    await tester.enterText(search, 'Clop');
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Clopid'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Clopid'));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Check interactions'));
+    await tester.tap(find.text('Check interactions'));
+    await tester.pumpAndSettle();
+
+    // Both medicines were selected before checking.
+    expect(find.text('Selected medicines (2)'), findsOneWidget);
+
+    final list = find.byType(Scrollable).hitTestable().first;
+    await tester.scrollUntilVisible(find.textContaining('Data sources'), 300,
+        scrollable: list);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Esomeprazole + Clopidogrel'), findsOneWidget);
+    expect(find.text('SEVERE'), findsOneWidget);
+    expect(find.text('Source: DDInter'), findsOneWidget);
+    expect(find.textContaining('CC BY-NC-SA 4.0'), findsOneWidget);
   });
 }

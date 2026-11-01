@@ -19,6 +19,7 @@ class _InteractionCheckerScreenState extends State<InteractionCheckerScreen> {
   List<Map<String, dynamic>> _filteredMedicines = [];
   final List<String> _selectedMedicines = [];
   List<Map<String, dynamic>> _interactions = [];
+  List<Map<String, dynamic>> _sources = [];
 
   bool _isLoadingNames = true;
   bool _isChecking = false;
@@ -106,9 +107,11 @@ class _InteractionCheckerScreenState extends State<InteractionCheckerScreen> {
       final result = await _api.checkInteractions(_selectedMedicines);
       if (!mounted) return;
       final interactions = result['interactions'];
+      final sources = result['sources'];
       setState(() {
         _interactions =
             interactions is List ? interactions.cast<Map<String, dynamic>>() : [];
+        _sources = sources is List ? sources.cast<Map<String, dynamic>>() : [];
         _hasChecked = true;
       });
     } on MedicineApiException catch (e) {
@@ -403,12 +406,19 @@ class _InteractionCheckerScreenState extends State<InteractionCheckerScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'None of the selected medicines are listed together in our '
-                      'interaction database. This database covers a limited set of '
-                      'common drugs, so it does not prove the combination is safe. '
-                      'Always confirm with a doctor or pharmacist.',
+                      _usesDdinter
+                          ? 'None of the selected medicines are listed together '
+                              'in the interaction databases checked. This does '
+                              'not prove the combination is safe. Always confirm '
+                              'with a doctor or pharmacist.'
+                          : 'None of the selected medicines are listed together '
+                              'in our interaction database. This database covers '
+                              'a limited set of common drugs, so it does not '
+                              'prove the combination is safe. Always confirm '
+                              'with a doctor or pharmacist.',
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
+                    _buildSources(context),
                   ],
                 ),
               ),
@@ -433,7 +443,33 @@ class _InteractionCheckerScreenState extends State<InteractionCheckerScreen> {
           _buildInteractionCard(context, interaction),
           const SizedBox(height: 12),
         ],
+        _buildSources(context),
       ],
+    );
+  }
+
+  bool get _usesDdinter => _sources.any((s) => s['name'] == 'DDInter');
+
+  /// Credits the data sources (DDInter's license requires attribution).
+  Widget _buildSources(BuildContext context) {
+    if (_sources.isEmpty) return const SizedBox.shrink();
+    final text = _sources.map((s) {
+      final license = s['license']?.toString() ?? '';
+      final url = s['url']?.toString() ?? '';
+      return [
+        s['name'],
+        if (license.isNotEmpty) '($license)',
+        if (url.isNotEmpty) url,
+      ].join(' ');
+    }).join('; ');
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Text(
+        'Data sources: $text',
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+      ),
     );
   }
 
@@ -479,7 +515,9 @@ class _InteractionCheckerScreenState extends State<InteractionCheckerScreen> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
-                          severity.toUpperCase(),
+                          severity.toLowerCase() == 'unknown'
+                              ? 'SEVERITY UNKNOWN'
+                              : severity.toUpperCase(),
                           style: TextStyle(
                             color: color,
                             fontWeight: FontWeight.bold,
@@ -497,6 +535,15 @@ class _InteractionCheckerScreenState extends State<InteractionCheckerScreen> {
               interaction['effect']?.toString() ?? '',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
+            if ((interaction['source']?.toString() ?? '').isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Source: ${interaction['source']}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ],
             if ((interaction['recommendation']?.toString() ?? '').isNotEmpty) ...[
               const SizedBox(height: 10),
               Container(

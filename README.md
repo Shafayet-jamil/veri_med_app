@@ -39,6 +39,25 @@ All settings are optional environment variables:
 a production-ready server, and only falls back to Flask's development server
 if Waitress is not installed.
 
+### More drug-interaction data (optional)
+
+The interaction checker always uses the small hand-written list in
+`mediCheker/excelFile/drug_interactions.csv` (65 pairs, with an explanation
+for each). To add the [DDInter](https://ddinter.scbdd.com/) database (about
+160,000 pairs with a severity level), run once:
+
+```powershell
+python mediCheker\import_ddinter.py --accept-license
+```
+
+and restart the server. DDInter is licensed
+[CC BY-NC-SA 4.0](https://ddinter.scbdd.com/terms/): **non-commercial use
+only**, with credit to DDInter (the app shows the source with each result).
+That is why the downloaded file (`excelFile/ddinter_interactions.csv`) is
+ignored by git and not part of this repository. Delete it to stop using
+DDInter. If MediChecker is ever used commercially, replace DDInter with a
+commercially licensed source.
+
 ## Run the Flutter app
 
 Install the Flutter dependencies, then run on an Android emulator:
@@ -105,9 +124,12 @@ provide HTTPS. Then build the app with `MEDICHECKER_API_URL` set to the
 
 ## Limitations
 
-- **Interaction data is small.** `excelFile/drug_interactions.csv` lists 65
-  pairs across about 50 drugs. "No known interactions" only means the pair is
-  not in this file. Expand it from a vetted source before relying on it.
-- **Verification is a heuristic.** The genuine / suspicious / counterfeit
-  verdict compares the text on the package with the DGDA registration record.
-  A good copy of a real package can still score as genuine.
+- **Interaction results are not medical advice.** Without DDInter the list
+  has only 65 pairs. Even with it, "No known interactions" only means the
+  pair is not listed. DDInter entries give a severity but no explanation.
+- **Verification compares text, it cannot prove authenticity.** The scan
+  checks the details it can read on the package against the DGDA
+  registration record. Details that are not visible in the photo are reported
+  as "not visible" and do not lower the result; only details that are read
+  and contradict the record count against it. A good copy of a real package
+  can still match.

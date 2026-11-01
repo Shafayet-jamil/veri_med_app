@@ -13,7 +13,8 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 # Import existing backend modules
 from lookup import run_lookup, lookup_by_dar, load_sheets
 from phase2_ocr import run_easyocr, UnreadableImageError
-from interactions import load_interactions, load_medicine_names, check_interactions
+from interactions import (load_interactions, load_medicine_names, check_interactions,
+                          data_sources)
 from verification import compute_verification
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -271,6 +272,7 @@ def check_drug_interactions():
             "interaction_count": len(results),
             "interactions": results,
             "medicines_checked": medicines,
+            "sources": data_sources(interactions_df),
         })
     except Exception:
         log.exception("Interaction check failed")

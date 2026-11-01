@@ -55,3 +55,6 @@ app.*.map.json
 
 /mediCheker/**/__pycache__/
 /mediCheker/.pytest_cache/
+
+# DDInter data (CC BY-NC-SA 4.0): downloaded by import_ddinter.py, not redistributed
+/mediCheker/excelFile/ddinter_interactions.csv
