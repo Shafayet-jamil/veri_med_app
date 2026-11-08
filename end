@@ -1,0 +1,441 @@
+[1mdiff --git a/mediCheker/lookup.py b/mediCheker/lookup.py[m
+[1mindex 35367db..bacf013 100644[m
+[1m--- a/mediCheker/lookup.py[m
+[1m+++ b/mediCheker/lookup.py[m
+[36m@@ -17,36 +17,37 @@[m [mdef extract_3digit(value: str) -> str:[m
+     return match.group(1) if match else str(value).strip()[m
+ [m
+ def normalize_ma_number(ma_number: str) -> str:[m
+[31m-[m
+[31m-    tablet_pattern = re.compile(r'^(\d+)-(\d{3})-(\d+)$')[m
+[31m-    match = tablet_pattern.match(ma_number.strip())[m
+[32m+[m[32m    """Pad to the database's 3-4-3 form: 353-41-023 -> 353-0041-023."""[m
+[32m+[m[32m    match = re.fullmatch(r'(\d{1,3})-(\d{1,4})-(\d{1,3})', ma_number.strip())[m
+     if match:[m
+         prefix, middle, suffix = match.groups()[m
+[31m-        return f"{prefix}-0{middle}-{suffix}"[m
+[32m+[m[32m        return f"{prefix.zfill(3)}-{middle.zfill(4)}-{suffix.zfill(3)}"[m
+[32m+[m[32m    return ma_number[m
+ [m
+ [m
+[31m-    return ma_number[m
+[32m+[m[32m# "MA No.: 308-761-021", "DAR No 186-480-006", "MANo. 353-41-023".[m
+[32m+[m[32m# \b before the label stops matches inside words like "Pharma".[m
+[32m+[m[32m_LABELED_DAR = re.compile([m
+[32m+[m[32m    r'\b(?:DAR|MA)\s*(?:N[o0]s?\b)?[\s.:\-]*'[m
+[32m+[m[32m    r'(\d{3})\s?[-.]\s?(\d{2,4})\s?[-.]\s?(\d{3})(?!\d)',[m
+[32m+[m[32m    re.IGNORECASE,[m
+[32m+[m[32m)[m
+[32m+[m[32m# Unlabeled fallback is hyphen-only with a 3-digit prefix and suffix, so dates[m
+[32m+[m[32m# such as 12.05.2025 or 2025-05-12 and batch numbers like 3010001904 are rejected.[m
+[32m+[m[32m_UNLABELED_DAR = re.compile(r'(?<!\d)(\d{3})\s?-\s?(\d{2,4})\s?-\s?(\d{3})(?!\d)')[m
+ [m
+[31m-def extract_and_normalize_dar_ma_number(text: str) -> str | None:[m
+ [m
+[31m-    # Try explicit DAR/MA label first (most reliable)[m
+[31m-    labeled = re.search([m
+[31m-        r'(?:DAR|MA|D[A4]R|OAR)[\s.:\-]*(?:No\.?[\s.:\-]*)?'[m
+[31m-        r'(\d{2,4}[\s.:\-]+\d{2,5}[\s.:\-]+\d{2,5})',[m
+[31m-        text, re.IGNORECASE[m
+[31m-    )[m
+[31m-    if labeled:[m
+[31m-        raw = labeled.group(1)[m
+[31m-        standardized = re.sub(r'[\s.:]', '-', raw).strip('-')[m
+[31m-        return normalize_ma_number(standardized)[m
+[32m+[m[32mdef find_labeled_dar_ma_number(text: str) -> str | None:[m
+[32m+[m[32m    match = _LABELED_DAR.search(text)[m
+[32m+[m[32m    return normalize_ma_number("-".join(match.groups())) if match else None[m
+ [m
+[31m-    # Fallback: any 3-part numeric pattern like 481-0003-034[m
+[31m-    unlabeled = re.search(r'(\d{2,4})[\s.:\-]+(\d{2,5})[\s.:\-]+(\d{2,5})', text)[m
+[31m-    if unlabeled:[m
+[31m-        parts = f"{unlabeled.group(1)}-{unlabeled.group(2)}-{unlabeled.group(3)}"[m
+[31m-        return normalize_ma_number(parts)[m
+ [m
+[31m-    return None[m
+[32m+[m[32mdef extract_and_normalize_dar_ma_number(text: str) -> str | None:[m
+[32m+[m[32m    labeled = find_labeled_dar_ma_number(text)[m
+[32m+[m[32m    if labeled:[m
+[32m+[m[32m        return labeled[m
+[32m+[m[32m    match = _UNLABELED_DAR.search(text)[m
+[32m+[m[32m    return normalize_ma_number("-".join(match.groups())) if match else None[m
+ [m
+ [m
+ def load_sheets() -> tuple[pd.DataFrame, pd.DataFrame]:[m
+[1mdiff --git a/mediCheker/phase2_ocr.py b/mediCheker/phase2_ocr.py[m
+[1mindex 6c2df9f..bf5eae6 100644[m
+[1m--- a/mediCheker/phase2_ocr.py[m
+[1m+++ b/mediCheker/phase2_ocr.py[m
+[36m@@ -1,14 +1,19 @@[m
+[32m+[m[32mimport os[m
+[32m+[m[32mimport re[m
+[32m+[m
+ import cv2[m
+ import easyocr[m
+ import numpy as np[m
+[31m-import os[m
+[31m-import re[m
+[31m-import tempfile[m
+ [m
+[32m+[m[32mfrom lookup import find_labeled_dar_ma_number[m
+ [m
+[31m-# Reusable reader — EasyOCR model loading is expensive (~2-4 s), so we do it once.[m
+[32m+[m[32m# EasyOCR model loading is expensive, so load it once per process.[m
+ _reader = None[m
+ [m
+[32m+[m[32mMIN_CONFIDENCE = 0.35[m
+[32m+[m[32mMIN_LONG_SIDE = 1200[m
+[32m+[m[32mMAX_LONG_SIDE = 2000[m
+[32m+[m
+ [m
+ def _get_reader():[m
+     global _reader[m
+[36m@@ -17,94 +22,63 @@[m [mdef _get_reader():[m
+     return _reader[m
+ [m
+ [m
+[31m-# ── Preprocessing strategies ──────────────────────────────────────────────────[m
+[32m+[m[32m# ── Preprocessing ────────────────────────────────────────────────────────────[m
+ [m
+[31m-def _upscale(img, factor=2):[m
+[31m-    h, w = img.shape[:2][m
+[31m-    return cv2.resize(img, (w * factor, h * factor), interpolation=cv2.INTER_LANCZOS4)[m
+[32m+[m[32mdef _prepare_gray(img):[m
+[32m+[m[32m    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img[m
+[32m+[m[32m    h, w = gray.shape[m
+[32m+[m[32m    long_side = max(h, w)[m
+[32m+[m[32m    if long_side < MIN_LONG_SIDE:[m
+[32m+[m[32m        scale = min(MIN_LONG_SIDE / long_side, 4.0)[m
+[32m+[m[32m        return cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)[m
+[32m+[m[32m    if long_side > MAX_LONG_SIDE:[m
+[32m+[m[32m        scale = MAX_LONG_SIDE / long_side[m
+[32m+[m[32m        return cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)[m
+[32m+[m[32m    return gray[m
+ [m
+ [m
+[31m-def _to_gray(img):[m
+[31m-    if len(img.shape) == 3:[m
+[31m-        return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)[m
+[31m-    return img[m
+[32m+[m[32mdef _strategy_plain(gray):[m
+[32m+[m[32m    return gray[m
+ [m
+ [m
+[31m-def _deskew(gray):[m
+[31m-    coords = np.column_stack(np.where(gray > 0))[m
+[31m-    if coords.shape[0] < 50:[m
+[31m-        return gray[m
+[31m-    angle = cv2.minAreaRect(coords)[-1][m
+[31m-    if angle < -45:[m
+[31m-        angle = -(90 + angle)[m
+[31m-    else:[m
+[31m-        angle = -angle[m
+[31m-    if abs(angle) < 0.5 or abs(angle) > 15:[m
+[31m-        return gray[m
+[31m-    h, w = gray.shape[m
+[31m-    center = (w // 2, h // 2)[m
+[31m-    matrix = cv2.getRotationMatrix2D(center, angle, 1.0)[m
+[31m-    return cv2.warpAffine(gray, matrix, (w, h), flags=cv2.INTER_CUBIC,[m
+[31m-                          borderMode=cv2.BORDER_REPLICATE)[m
+[32m+[m[32mdef _strategy_clahe(gray):[m
+[32m+[m[32m    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))[m
+[32m+[m[32m    return clahe.apply(gray)[m
+ [m
+ [m
+ def _strategy_clahe_otsu(gray):[m
+[31m-    """Good for printed text on white/light backgrounds."""[m
+     bilateral = cv2.bilateralFilter(gray, d=9, sigmaColor=75, sigmaSpace=75)[m
+[31m-    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))[m
+[31m-    enhanced = clahe.apply(bilateral)[m
+[32m+[m[32m    enhanced = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8)).apply(bilateral)[m
+     blur = cv2.GaussianBlur(enhanced, (0, 0), sigmaX=2)[m
+     sharpened = cv2.addWeighted(enhanced, 1.5, blur, -0.5, 0)[m
+     _, binary = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[m
+[31m-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))[m
+[31m-    return cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)[m
+[32m+[m[32m    return binary[m
+ [m
+ [m
+[31m-def _strategy_adaptive(gray):[m
+[31m-    """Better for uneven lighting and metallic/foil surfaces."""[m
+[31m-    denoised = cv2.fastNlMeansDenoising(gray, h=12)[m
+[31m-    binary = cv2.adaptiveThreshold([m
+[31m-        denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,[m
+[31m-        cv2.THRESH_BINARY, blockSize=31, C=10[m
+[31m-    )[m
+[31m-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))[m
+[31m-    return cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=1)[m
+[32m+[m[32mdef _strategy_inverted(gray):[m
+[32m+[m[32m    """Light text on dark foil (green/purple packs)."""[m
+[32m+[m[32m    enhanced = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)).apply(gray)[m
+[32m+[m[32m    return cv2.bitwise_not(enhanced)[m
+ [m
+ [m
+[31m-def _strategy_inverted(gray):[m
+[31m-    """Handles light text on dark/metallic backgrounds (common on foil packs)."""[m
+[31m-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))[m
+[31m-    enhanced = clahe.apply(gray)[m
+[31m-    _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[m
+[31m-    white_ratio = np.sum(binary == 255) / binary.size[m
+[31m-    if white_ratio < 0.15 or white_ratio > 0.85:[m
+[31m-        return None[m
+[31m-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))[m
+[31m-    return cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)[m
+[31m-[m
+[31m-[m
+[31m-def _strategy_high_contrast(gray):[m
+[31m-    """Aggressive contrast for faded or low-contrast prints."""[m
+[31m-    clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(4, 4))[m
+[31m-    enhanced = clahe.apply(gray)[m
+[31m-    blur = cv2.GaussianBlur(enhanced, (0, 0), sigmaX=3)[m
+[31m-    sharpened = cv2.addWeighted(enhanced, 2.0, blur, -1.0, 0)[m
+[31m-    _, binary = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[m
+[31m-    return binary[m
+[32m+[m[32m# Ordered cheapest/most-likely first; scanning stops once a DAR/MA number is read.[m
+[32m+[m[32mSTRATEGIES = [[m
+[32m+[m[32m    ("plain", _strategy_plain),[m
+[32m+[m[32m    ("clahe", _strategy_clahe),[m
+[32m+[m[32m    ("inverted", _strategy_inverted),[m
+[32m+[m[32m    ("clahe_otsu", _strategy_clahe_otsu),[m
+[32m+[m[32m][m
+ [m
+ [m
+ # ── OCR text cleanup ─────────────────────────────────────────────────────────[m
+ [m
+[31m-# Common OCR misreads in the medicine/DAR-number context[m
+ _OCR_CORRECTIONS = [[m
+[31m-    (r'\bMlG\b', 'MFG'),[m
+[31m-    (r'\bMIG\b', 'MFG'),[m
+[32m+[m[32m    (r'\bM[lI1]g\b', 'Mfg'),[m
+     (r'\bL[1l]c\b', 'Lic'),[m
+     (r'\bN[0o]\b', 'No'),[m
+[31m-    (r'\bN[0o]\.\b', 'No.'),[m
+     (r'\bDAF\b', 'DAR'),[m
+     (r'\bOAR\b', 'DAR'),[m
+[31m-    (r'\bD[A4]R\b', 'DAR'),[m
+[32m+[m[32m    (r'\bD4R\b', 'DAR'),[m
+ ][m
+ [m
+ [m
+[36m@@ -115,122 +89,74 @@[m [mdef _fix_ocr_errors(text: str) -> str:[m
+ [m
+ [m
+ def _clean_text(text: str) -> str:[m
+[31m-    text = text.strip()[m
+     text = re.sub(r'[^\x20-\x7E]', ' ', text)[m
+[31m-    text = re.sub(r'\s+', ' ', text)[m
+[31m-    return text.strip()[m
+[31m-[m
+[31m-[m
+[31m-# ── Spatial sorting ──────────────────────────────────────────────────────────[m
+[31m-[m
+[31m-def _sort_by_position(ocr_results):[m
+[31m-    """Sort OCR detections top-to-bottom, then left-to-right within each row."""[m
+[31m-    if not ocr_results:[m
+[31m-        return ocr_results[m
+[32m+[m[32m    return re.sub(r'\s+', ' ', text).strip()[m
+ [m
+[31m-    entries = [][m
+[31m-    for bbox, text, prob in ocr_results:[m
+[31m-        top_y = min(pt[1] for pt in bbox)[m
+[31m-        left_x = min(pt[0] for pt in bbox)[m
+[31m-        entries.append((top_y, left_x, bbox, text, prob))[m
+ [m
+[31m-    if not entries:[m
+[31m-        return ocr_results[m
+[32m+[m[32m# ── Ordering and dedup ───────────────────────────────────────────────────────[m
+ [m
+[31m-    all_heights = [][m
+[31m-    for bbox, text, prob in ocr_results:[m
+[31m-        ys = [pt[1] for pt in bbox][m
+[31m-        all_heights.append(max(ys) - min(ys))[m
+[31m-    row_threshold = max(np.median(all_heights) * 0.5, 10) if all_heights else 20[m
+[31m-[m
+[31m-    entries.sort(key=lambda e: (e[0], e[1]))[m
+[32m+[m[32mdef _sort_by_position(results):[m
+[32m+[m[32m    """Top-to-bottom rows, left-to-right within a row."""[m
+[32m+[m[32m    if not results:[m
+[32m+[m[32m        return results[m
+[32m+[m[32m    heights = [max(p[1] for p in b) - min(p[1] for p in b) for b, _, _ in results][m
+[32m+[m[32m    row_gap = max(float(np.median(heights)) * 0.5, 10.0)[m
+ [m
+[31m-    rows = [][m
+[31m-    current_row = [entries[0]][m
+[32m+[m[32m    entries = sorted([m
+[32m+[m[32m        ((min(p[1] for p in b), min(p[0] for p in b), (b, t, c)) for b, t, c in results),[m
+[32m+[m[32m        key=lambda e: (e[0], e[1]),[m
+[32m+[m[32m    )[m
+[32m+[m[32m    rows, current = [], [entries[0]][m
+     for entry in entries[1:]:[m
+[31m-        if abs(entry[0] - current_row[0][0]) <= row_threshold:[m
+[31m-            current_row.append(entry)[m
+[32m+[m[32m        if entry[0] - current[0][0] <= row_gap:[m
+[32m+[m[32m            current.append(entry)[m
+         else:[m
+[31m-            rows.append(current_row)[m
+[31m-            current_row = [entry][m
+[31m-    rows.append(current_row)[m
+[32m+[m[32m            rows.append(current)[m
+[32m+[m[32m            current = [entry][m
+[32m+[m[32m    rows.append(current)[m
+ [m
+[31m-    sorted_results = [][m
+[32m+[m[32m    ordered = [][m
+     for row in rows:[m
+[31m-        row.sort(key=lambda e: e[1])[m
+[31m-        for _, _, bbox, text, prob in row:[m
+[31m-            sorted_results.append((bbox, text, prob))[m
+[31m-[m
+[31m-    return sorted_results[m
+[31m-[m
+[31m-[m
+[31m-# ── Deduplication ────────────────────────────────────────────────────────────[m
+[32m+[m[32m        ordered.extend(item for _, _, item in sorted(row, key=lambda e: e[1]))[m
+[32m+[m[32m    return ordered[m
+ [m
+[31m-def _deduplicate(texts: list[str]) -> list[str]:[m
+[31m-    """Remove near-duplicate strings (one is a substring of another)."""[m
+[31m-    if len(texts) <= 1:[m
+[31m-        return texts[m
+ [m
+[31m-    result = [][m
+[31m-    seen_lower = [][m
+[32m+[m[32mdef _deduplicate(texts):[m
+[32m+[m[32m    """Drop exact repeats (packs print the same label many times)."""[m
+[32m+[m[32m    seen, result = set(), [][m
+     for text in texts:[m
+[31m-        t = text.strip().lower()[m
+[31m-        if not t:[m
+[31m-            continue[m
+[31m-        is_dup = False[m
+[31m-        for s in seen_lower:[m
+[31m-            if t in s or s in t:[m
+[31m-                is_dup = True[m
+[31m-                break[m
+[31m-        if not is_dup:[m
+[32m+[m[32m        key = text.lower()[m
+[32m+[m[32m        if key not in seen:[m
+[32m+[m[32m            seen.add(key)[m
+             result.append(text)[m
+[31m-            seen_lower.append(t)[m
+     return result[m
+ [m
+ [m
+[31m-# ── MA number normalization ──────────────────────────────────────────────────[m
+[31m-[m
+[31m-def normalize_ma_number(ma_number: str) -> str:[m
+[31m-    tablet_pattern = re.compile(r'^(\d+)-(\d{3})-(\d+)$')[m
+[31m-    match = tablet_pattern.match(ma_number.strip())[m
+[31m-    if match:[m
+[31m-        prefix, middle, suffix = match.groups()[m
+[31m-        return f"{prefix}-0{middle}-{suffix}"[m
+[31m-    return ma_number[m
+[31m-[m
+[31m-[m
+[31m-# ── Multi-strategy OCR runner ────────────────────────────────────────────────[m
+[31m-[m
+[31m-def _run_ocr_on_image(processed_gray, min_confidence=0.35):[m
+[31m-    """Run EasyOCR on a preprocessed grayscale image and return filtered results."""[m
+[31m-    fd, temp_path = tempfile.mkstemp(suffix=".png")[m
+[31m-    os.close(fd)[m
+[31m-    try:[m
+[31m-        if not cv2.imwrite(temp_path, processed_gray):[m
+[31m-            return [][m
+[31m-        reader = _get_reader()[m
+[31m-        raw = reader.readtext([m
+[31m-            temp_path,[m
+[31m-            text_threshold=0.4,[m
+[31m-            low_text=0.3,[m
+[31m-            slope_ths=0.5,[m
+[31m-            min_size=15,[m
+[31m-            width_ths=0.8,[m
+[31m-            paragraph=False,[m
+[31m-        )[m
+[31m-        return [(bbox, text, prob) for bbox, text, prob in raw if prob >= min_confidence][m
+[31m-    finally:[m
+[31m-        if os.path.exists(temp_path):[m
+[31m-            os.remove(temp_path)[m
+[31m-[m
+[31m-[m
+[31m-def _score_results(results):[m
+[31m-    """Score a set of OCR results: prefer more high-confidence text."""[m
+[31m-    if not results:[m
+[31m-        return 0[m
+[31m-    total_conf = sum(prob for _, _, prob in results)[m
+[31m-    text_length = sum(len(text.strip()) for _, text, _ in results)[m
+[31m-    return total_conf * 0.6 + text_length * 0.01[m
+[32m+[m[32m# ── OCR runner ───────────────────────────────────────────────────────────────[m
+[32m+[m
+[32m+[m[32mdef _read(image):[m
+[32m+[m[32m    raw = _get_reader().readtext([m
+[32m+[m[32m        image,[m
+[32m+[m[32m        text_threshold=0.4,[m
+[32m+[m[32m        low_text=0.3,[m
+[32m+[m[32m        min_size=15,[m
+[32m+[m[32m        width_ths=0.8,[m
+[32m+[m[32m        rotation_info=[90, 270],[m
+[32m+[m[32m    )[m
+[32m+[m[32m    return [(b, t, c) for b, t, c in raw if c >= MIN_CONFIDENCE][m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef _to_lines(results):[m
+[32m+[m[32m    lines = [][m
+[32m+[m[32m    for _, text, _ in _sort_by_position(results):[m
+[32m+[m[32m        cleaned = _clean_text(text)[m
+[32m+[m[32m        if len(cleaned) >= 2:[m
+[32m+[m[32m            lines.append(_fix_ocr_errors(cleaned))[m
+[32m+[m[32m    return _deduplicate(lines)[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef _score(results):[m
+[32m+[m[32m    return sum(c for _, _, c in results) * 0.6 + sum(len(t.strip()) for _, t, _ in results) * 0.01[m
+ [m
+ [m
+ def run_easyocr(image_path):[m
+[36m@@ -239,78 +165,30 @@[m [mdef run_easyocr(image_path):[m
+     img = cv2.imread(image_path)[m
+     if img is None:[m
+         raise FileNotFoundError(f"Image not found: {image_path}")[m
+[31m-[m
+[31m-    upscaled = _upscale(img, factor=2)[m
+[31m-    gray = _to_gray(upscaled)[m
+[31m-    gray = _deskew(gray)[m
+[31m-[m
+[31m-    strategies = {[m
+[31m-        "clahe_otsu": _strategy_clahe_otsu,[m
+[31m-        "adaptive": _strategy_adaptive,[m
+[31m-        "inverted": _strategy_inverted,[m
+[31m-        "high_contrast": _strategy_high_contrast,[m
+[31m-    }[m
+[31m-[m
+[31m-    best_results = [][m
+[31m-    best_score = 0[m
+[31m-    best_strategy = "none"[m
+[31m-[m
+[31m-    for name, strategy_fn in strategies.items():[m
+[31m-        processed = strategy_fn(gray)[m
+[31m-        if processed is None:[m
+[31m-            continue[m
+[31m-        results = _run_ocr_on_image(processed, min_confidence=0.35)[m
+[31m-        score = _score_results(results)[m
+[31m-        print(f"  [{name}] {len(results)} detections, score={score:.1f}")[m
+[32m+[m[32m    gray = _prepare_gray(img)[m
+[32m+[m
+[32m+[m[32m    best_lines, best_score, best_name = [], -1.0, "none"[m
+[32m+[m[32m    for name, strategy in STRATEGIES:[m
+[32m+[m[32m        results = _read(strategy(gray))[m
+[32m+[m[32m        lines = _to_lines(results)[m
+[32m+[m[32m        score = _score(results)[m
+[32m+[m[32m        dar = find_labeled_dar_ma_number(" ".join(lines))[m
+[32m+[m[32m        print(f"  [{name}] {len(results)} detections, score={score:.1f}, DAR={dar}")[m
+[32m+[m[32m        if dar:[m
+[32m+[m[32m            best_lines, best_name = lines, name[m
+[32m+[m[32m            break[m
+         if score > best_score:[m
+[31m-            best_score = score[m
+[31m-            best_results = results[m
+[31m-            best_strategy = name[m
+[31m-[m
+[31m-    # Also try the plain gray (no binarization) — EasyOCR sometimes works better on it[m
+[31m-    plain_results = _run_ocr_on_image(gray, min_confidence=0.35)[m
+[31m-    plain_score =

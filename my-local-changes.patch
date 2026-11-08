@@ -1,0 +1,491 @@
+﻿diff --git a/mediCheker/lookup.py b/mediCheker/lookup.py
+index 35367db..bacf013 100644
+--- a/mediCheker/lookup.py
++++ b/mediCheker/lookup.py
+@@ -17,36 +17,37 @@ def extract_3digit(value: str) -> str:
+     return match.group(1) if match else str(value).strip()
+ 
+ def normalize_ma_number(ma_number: str) -> str:
+-
+-    tablet_pattern = re.compile(r'^(\d+)-(\d{3})-(\d+)$')
+-    match = tablet_pattern.match(ma_number.strip())
++    """Pad to the database's 3-4-3 form: 353-41-023 -> 353-0041-023."""
++    match = re.fullmatch(r'(\d{1,3})-(\d{1,4})-(\d{1,3})', ma_number.strip())
+     if match:
+         prefix, middle, suffix = match.groups()
+-        return f"{prefix}-0{middle}-{suffix}"
++        return f"{prefix.zfill(3)}-{middle.zfill(4)}-{suffix.zfill(3)}"
++    return ma_number
+ 
+ 
+-    return ma_number
++# "MA No.: 308-761-021", "DAR No 186-480-006", "MANo. 353-41-023".
++# \b before the label stops matches inside words like "Pharma".
++_LABELED_DAR = re.compile(
++    r'\b(?:DAR|MA)\s*(?:N[o0]s?\b)?[\s.:\-]*'
++    r'(\d{3})\s?[-.]\s?(\d{2,4})\s?[-.]\s?(\d{3})(?!\d)',
++    re.IGNORECASE,
++)
++# Unlabeled fallback is hyphen-only with a 3-digit prefix and suffix, so dates
++# such as 12.05.2025 or 2025-05-12 and batch numbers like 3010001904 are rejected.
++_UNLABELED_DAR = re.compile(r'(?<!\d)(\d{3})\s?-\s?(\d{2,4})\s?-\s?(\d{3})(?!\d)')
+ 
+-def extract_and_normalize_dar_ma_number(text: str) -> str | None:
+ 
+-    # Try explicit DAR/MA label first (most reliable)
+-    labeled = re.search(
+-        r'(?:DAR|MA|D[A4]R|OAR)[\s.:\-]*(?:No\.?[\s.:\-]*)?'
+-        r'(\d{2,4}[\s.:\-]+\d{2,5}[\s.:\-]+\d{2,5})',
+-        text, re.IGNORECASE
+-    )
+-    if labeled:
+-        raw = labeled.group(1)
+-        standardized = re.sub(r'[\s.:]', '-', raw).strip('-')
+-        return normalize_ma_number(standardized)
++def find_labeled_dar_ma_number(text: str) -> str | None:
++    match = _LABELED_DAR.search(text)
++    return normalize_ma_number("-".join(match.groups())) if match else None
+ 
+-    # Fallback: any 3-part numeric pattern like 481-0003-034
+-    unlabeled = re.search(r'(\d{2,4})[\s.:\-]+(\d{2,5})[\s.:\-]+(\d{2,5})', text)
+-    if unlabeled:
+-        parts = f"{unlabeled.group(1)}-{unlabeled.group(2)}-{unlabeled.group(3)}"
+-        return normalize_ma_number(parts)
+ 
+-    return None
++def extract_and_normalize_dar_ma_number(text: str) -> str | None:
++    labeled = find_labeled_dar_ma_number(text)
++    if labeled:
++        return labeled
++    match = _UNLABELED_DAR.search(text)
++    return normalize_ma_number("-".join(match.groups())) if match else None
+ 
+ 
+ def load_sheets() -> tuple[pd.DataFrame, pd.DataFrame]:
+diff --git a/mediCheker/phase2_ocr.py b/mediCheker/phase2_ocr.py
+index 6c2df9f..bf5eae6 100644
+--- a/mediCheker/phase2_ocr.py
++++ b/mediCheker/phase2_ocr.py
+@@ -1,14 +1,19 @@
++import os
++import re
++
+ import cv2
+ import easyocr
+ import numpy as np
+-import os
+-import re
+-import tempfile
+ 
++from lookup import find_labeled_dar_ma_number
+ 
+-# Reusable reader ΓÇö EasyOCR model loading is expensive (~2-4 s), so we do it once.
++# EasyOCR model loading is expensive, so load it once per process.
+ _reader = None
+ 
++MIN_CONFIDENCE = 0.35
++MIN_LONG_SIDE = 1200
++MAX_LONG_SIDE = 2000
++
+ 
+ def _get_reader():
+     global _reader
+@@ -17,94 +22,63 @@ def _get_reader():
+     return _reader
+ 
+ 
+-# ΓöÇΓöÇ Preprocessing strategies ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++# ΓöÇΓöÇ Preprocessing ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+ 
+-def _upscale(img, factor=2):
+-    h, w = img.shape[:2]
+-    return cv2.resize(img, (w * factor, h * factor), interpolation=cv2.INTER_LANCZOS4)
++def _prepare_gray(img):
++    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
++    h, w = gray.shape
++    long_side = max(h, w)
++    if long_side < MIN_LONG_SIDE:
++        scale = min(MIN_LONG_SIDE / long_side, 4.0)
++        return cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
++    if long_side > MAX_LONG_SIDE:
++        scale = MAX_LONG_SIDE / long_side
++        return cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
++    return gray
+ 
+ 
+-def _to_gray(img):
+-    if len(img.shape) == 3:
+-        return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+-    return img
++def _strategy_plain(gray):
++    return gray
+ 
+ 
+-def _deskew(gray):
+-    coords = np.column_stack(np.where(gray > 0))
+-    if coords.shape[0] < 50:
+-        return gray
+-    angle = cv2.minAreaRect(coords)[-1]
+-    if angle < -45:
+-        angle = -(90 + angle)
+-    else:
+-        angle = -angle
+-    if abs(angle) < 0.5 or abs(angle) > 15:
+-        return gray
+-    h, w = gray.shape
+-    center = (w // 2, h // 2)
+-    matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+-    return cv2.warpAffine(gray, matrix, (w, h), flags=cv2.INTER_CUBIC,
+-                          borderMode=cv2.BORDER_REPLICATE)
++def _strategy_clahe(gray):
++    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
++    return clahe.apply(gray)
+ 
+ 
+ def _strategy_clahe_otsu(gray):
+-    """Good for printed text on white/light backgrounds."""
+     bilateral = cv2.bilateralFilter(gray, d=9, sigmaColor=75, sigmaSpace=75)
+-    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+-    enhanced = clahe.apply(bilateral)
++    enhanced = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8)).apply(bilateral)
+     blur = cv2.GaussianBlur(enhanced, (0, 0), sigmaX=2)
+     sharpened = cv2.addWeighted(enhanced, 1.5, blur, -0.5, 0)
+     _, binary = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+-    return cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
++    return binary
+ 
+ 
+-def _strategy_adaptive(gray):
+-    """Better for uneven lighting and metallic/foil surfaces."""
+-    denoised = cv2.fastNlMeansDenoising(gray, h=12)
+-    binary = cv2.adaptiveThreshold(
+-        denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+-        cv2.THRESH_BINARY, blockSize=31, C=10
+-    )
+-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+-    return cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=1)
++def _strategy_inverted(gray):
++    """Light text on dark foil (green/purple packs)."""
++    enhanced = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)).apply(gray)
++    return cv2.bitwise_not(enhanced)
+ 
+ 
+-def _strategy_inverted(gray):
+-    """Handles light text on dark/metallic backgrounds (common on foil packs)."""
+-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+-    enhanced = clahe.apply(gray)
+-    _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+-    white_ratio = np.sum(binary == 255) / binary.size
+-    if white_ratio < 0.15 or white_ratio > 0.85:
+-        return None
+-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+-    return cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+-
+-
+-def _strategy_high_contrast(gray):
+-    """Aggressive contrast for faded or low-contrast prints."""
+-    clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(4, 4))
+-    enhanced = clahe.apply(gray)
+-    blur = cv2.GaussianBlur(enhanced, (0, 0), sigmaX=3)
+-    sharpened = cv2.addWeighted(enhanced, 2.0, blur, -1.0, 0)
+-    _, binary = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+-    return binary
++# Ordered cheapest/most-likely first; scanning stops once a DAR/MA number is read.
++STRATEGIES = [
++    ("plain", _strategy_plain),
++    ("clahe", _strategy_clahe),
++    ("inverted", _strategy_inverted),
++    ("clahe_otsu", _strategy_clahe_otsu),
++]
+ 
+ 
+ # ΓöÇΓöÇ OCR text cleanup ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+ 
+-# Common OCR misreads in the medicine/DAR-number context
+ _OCR_CORRECTIONS = [
+-    (r'\bMlG\b', 'MFG'),
+-    (r'\bMIG\b', 'MFG'),
++    (r'\bM[lI1]g\b', 'Mfg'),
+     (r'\bL[1l]c\b', 'Lic'),
+     (r'\bN[0o]\b', 'No'),
+-    (r'\bN[0o]\.\b', 'No.'),
+     (r'\bDAF\b', 'DAR'),
+     (r'\bOAR\b', 'DAR'),
+-    (r'\bD[A4]R\b', 'DAR'),
++    (r'\bD4R\b', 'DAR'),
+ ]
+ 
+ 
+@@ -115,122 +89,74 @@ def _fix_ocr_errors(text: str) -> str:
+ 
+ 
+ def _clean_text(text: str) -> str:
+-    text = text.strip()
+     text = re.sub(r'[^\x20-\x7E]', ' ', text)
+-    text = re.sub(r'\s+', ' ', text)
+-    return text.strip()
+-
+-
+-# ΓöÇΓöÇ Spatial sorting ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+-
+-def _sort_by_position(ocr_results):
+-    """Sort OCR detections top-to-bottom, then left-to-right within each row."""
+-    if not ocr_results:
+-        return ocr_results
++    return re.sub(r'\s+', ' ', text).strip()
+ 
+-    entries = []
+-    for bbox, text, prob in ocr_results:
+-        top_y = min(pt[1] for pt in bbox)
+-        left_x = min(pt[0] for pt in bbox)
+-        entries.append((top_y, left_x, bbox, text, prob))
+ 
+-    if not entries:
+-        return ocr_results
++# ΓöÇΓöÇ Ordering and dedup ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+ 
+-    all_heights = []
+-    for bbox, text, prob in ocr_results:
+-        ys = [pt[1] for pt in bbox]
+-        all_heights.append(max(ys) - min(ys))
+-    row_threshold = max(np.median(all_heights) * 0.5, 10) if all_heights else 20
+-
+-    entries.sort(key=lambda e: (e[0], e[1]))
++def _sort_by_position(results):
++    """Top-to-bottom rows, left-to-right within a row."""
++    if not results:
++        return results
++    heights = [max(p[1] for p in b) - min(p[1] for p in b) for b, _, _ in results]
++    row_gap = max(float(np.median(heights)) * 0.5, 10.0)
+ 
+-    rows = []
+-    current_row = [entries[0]]
++    entries = sorted(
++        ((min(p[1] for p in b), min(p[0] for p in b), (b, t, c)) for b, t, c in results),
++        key=lambda e: (e[0], e[1]),
++    )
++    rows, current = [], [entries[0]]
+     for entry in entries[1:]:
+-        if abs(entry[0] - current_row[0][0]) <= row_threshold:
+-            current_row.append(entry)
++        if entry[0] - current[0][0] <= row_gap:
++            current.append(entry)
+         else:
+-            rows.append(current_row)
+-            current_row = [entry]
+-    rows.append(current_row)
++            rows.append(current)
++            current = [entry]
++    rows.append(current)
+ 
+-    sorted_results = []
++    ordered = []
+     for row in rows:
+-        row.sort(key=lambda e: e[1])
+-        for _, _, bbox, text, prob in row:
+-            sorted_results.append((bbox, text, prob))
+-
+-    return sorted_results
+-
+-
+-# ΓöÇΓöÇ Deduplication ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++        ordered.extend(item for _, _, item in sorted(row, key=lambda e: e[1]))
++    return ordered
+ 
+-def _deduplicate(texts: list[str]) -> list[str]:
+-    """Remove near-duplicate strings (one is a substring of another)."""
+-    if len(texts) <= 1:
+-        return texts
+ 
+-    result = []
+-    seen_lower = []
++def _deduplicate(texts):
++    """Drop exact repeats (packs print the same label many times)."""
++    seen, result = set(), []
+     for text in texts:
+-        t = text.strip().lower()
+-        if not t:
+-            continue
+-        is_dup = False
+-        for s in seen_lower:
+-            if t in s or s in t:
+-                is_dup = True
+-                break
+-        if not is_dup:
++        key = text.lower()
++        if key not in seen:
++            seen.add(key)
+             result.append(text)
+-            seen_lower.append(t)
+     return result
+ 
+ 
+-# ΓöÇΓöÇ MA number normalization ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+-
+-def normalize_ma_number(ma_number: str) -> str:
+-    tablet_pattern = re.compile(r'^(\d+)-(\d{3})-(\d+)$')
+-    match = tablet_pattern.match(ma_number.strip())
+-    if match:
+-        prefix, middle, suffix = match.groups()
+-        return f"{prefix}-0{middle}-{suffix}"
+-    return ma_number
+-
+-
+-# ΓöÇΓöÇ Multi-strategy OCR runner ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+-
+-def _run_ocr_on_image(processed_gray, min_confidence=0.35):
+-    """Run EasyOCR on a preprocessed grayscale image and return filtered results."""
+-    fd, temp_path = tempfile.mkstemp(suffix=".png")
+-    os.close(fd)
+-    try:
+-        if not cv2.imwrite(temp_path, processed_gray):
+-            return []
+-        reader = _get_reader()
+-        raw = reader.readtext(
+-            temp_path,
+-            text_threshold=0.4,
+-            low_text=0.3,
+-            slope_ths=0.5,
+-            min_size=15,
+-            width_ths=0.8,
+-            paragraph=False,
+-        )
+-        return [(bbox, text, prob) for bbox, text, prob in raw if prob >= min_confidence]
+-    finally:
+-        if os.path.exists(temp_path):
+-            os.remove(temp_path)
+-
+-
+-def _score_results(results):
+-    """Score a set of OCR results: prefer more high-confidence text."""
+-    if not results:
+-        return 0
+-    total_conf = sum(prob for _, _, prob in results)
+-    text_length = sum(len(text.strip()) for _, text, _ in results)
+-    return total_conf * 0.6 + text_length * 0.01
++# ΓöÇΓöÇ OCR runner ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++
++def _read(image):
++    raw = _get_reader().readtext(
++        image,
++        text_threshold=0.4,
++        low_text=0.3,
++        min_size=15,
++        width_ths=0.8,
++        rotation_info=[90, 270],
++    )
++    return [(b, t, c) for b, t, c in raw if c >= MIN_CONFIDENCE]
++
++
++def _to_lines(results):
++    lines = []
++    for _, text, _ in _sort_by_position(results):
++        cleaned = _clean_text(text)
++        if len(cleaned) >= 2:
++            lines.append(_fix_ocr_errors(cleaned))
++    return _deduplicate(lines)
++
++
++def _score(results):
++    return sum(c for _, _, c in results) * 0.6 + sum(len(t.strip()) for _, t, _ in results) * 0.01
+ 
+ 
+ def run_easyocr(image_path):
+@@ -239,78 +165,30 @@ def run_easyocr(image_path):
+     img = cv2.imread(image_path)
+     if img is None:
+         raise FileNotFoundError(f"Image not found: {image_path}")
+-
+-    upscaled = _upscale(img, factor=2)
+-    gray = _to_gray(upscaled)
+-    gray = _deskew(gray)
+-
+-    strategies = {
+-        "clahe_otsu": _strategy_clahe_otsu,
+-        "adaptive": _strategy_adaptive,
+-        "inverted": _strategy_inverted,
+-        "high_contrast": _strategy_high_contrast,
+-    }
+-
+-    best_results = []
+-    best_score = 0
+-    best_strategy = "none"
+-
+-    for name, strategy_fn in strategies.items():
+-        processed = strategy_fn(gray)
+-        if processed is None:
+-            continue
+-        results = _run_ocr_on_image(processed, min_confidence=0.35)
+-        score = _score_results(results)
+-        print(f"  [{name}] {len(results)} detections, score={score:.1f}")
++    gray = _prepare_gray(img)
++
++    best_lines, best_score, best_name = [], -1.0, "none"
++    for name, strategy in STRATEGIES:
++        results = _read(strategy(gray))
++        lines = _to_lines(results)
++        score = _score(results)
++        dar = find_labeled_dar_ma_number(" ".join(lines))
++        print(f"  [{name}] {len(results)} detections, score={score:.1f}, DAR={dar}")
++        if dar:
++            best_lines, best_name = lines, name
++            break
+         if score > best_score:
+-            best_score = score
+-            best_results = results
+-            best_strategy = name
+-
+-    # Also try the plain gray (no binarization) ΓÇö EasyOCR sometimes works better on it
+-    plain_results = _run_ocr_on_image(gray, min_confidence=0.35)
+-    plain_score = _score_results(plain_results)
+-    print(f"  [plain] {len(plain_results)} detections, score={plain_score:.1f}")
+-    if plain_score > best_score:
+-        best_score = plain_score
+-        best_results = plain_results
+-        best_strategy = "plain"
+-
+-    print(f"  Best strategy: {best_strategy}")
+-
+-    sorted_results = _sort_by_position(best_results)
+-
+-    extracted = []
+-    for bbox, text, prob in sorted_results:
+-        cleaned = _clean_text(text)
+-        if len(cleaned) < 2:
+-            continue
+-        cleaned = _fix_ocr_errors(cleaned)
+-        extracted.append(cleaned)
+-        print(f"  [Confidence: {prob:.2f}] {cleaned}")
+-
+-    extracted = _deduplicate(extracted)
+-
+-    # Normalize MA/DAR numbers
+-    ma_pattern = re.compile(r'\d+-\d+-\d+')
+-    normalized = []
+-    for text in extracted:
+-        if ma_pattern.search(text):
+-            normed = normalize_ma_number(text)
+-            if normed != text:
+-                print(f"  [MA Normalized] '{text}' -> '{normed}'")
+-            normalized.append(normed)
+-        else:
+-            normalized.append(text)
++            best_lines, best_score, best_name = lines, score, name
+ 
+-    return normalized
++    print(f"  Using strategy: {best_name}")
++    for line in best_lines:
++        print(f"    {line}")
++    return best_lines
+ 
+ 
+ if __name__ == "__main__":
+     sample_image = os.path.join("dataset", "sample-4.jpeg")
+     if os.path.exists(sample_image):
+-        results = run_easyocr(sample_image)
+-        print("\n--- Final extracted text ---")
+-        print(" ".join(results))
++        print(" ".join(run_easyocr(sample_image)))
+     else:
+         print(f"Image not found: {sample_image}")
