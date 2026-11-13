@@ -84,6 +84,35 @@ def _ocr_variants(token: str) -> list[str]:
     return [v for v in dict.fromkeys(variants) if v.isalpha()]
 
 
+# A pack edge, foil crease or "|" next to a word is often read as one of
+# these thin letters glued to it: "IFuroclav" for "Furoclav".
+_STRAY_STROKES = "iljt"
+
+
+def _exact_variants(token: str) -> list[str]:
+    """Variants to try for an exact brand match: ``_ocr_variants`` plus the
+    word without a thin stray letter at either end. Only used to *accept* a
+    registered name, never to call one misspelled."""
+    variants = _ocr_variants(token)
+    for v in list(variants):
+        if len(v) >= 5:
+            if v[0] in _STRAY_STROKES:
+                variants.append(v[1:])
+            if v[-1] in _STRAY_STROKES:
+                variants.append(v[:-1])
+    return list(dict.fromkeys(variants))
+
+
+# OCR reads "500mg" as "5OOmg" or "SOOmg" and "125mg" as "12Smg".
+_OCR_NUMBER = re.compile(r"\b[\dOoSsIl.]*\d[\dOoSsIl.]*(?=\s*(?:mg|ml|gm|mcg|g)\b)"
+                         r"|\b[OoSs\d][\dOoSs]+(?=\s*(?:mg|ml|gm|mcg)\b)")
+
+
+def _fix_numbers(text: str) -> str:
+    table = str.maketrans({"O": "0", "o": "0", "S": "5", "s": "5", "I": "1", "l": "1"})
+    return _OCR_NUMBER.sub(lambda m: m.group(0).translate(table), text)
+
+
 @dataclass
 class _Candidate:
     row: int
@@ -151,10 +180,13 @@ class BrandIndex:
                    if w.isalpha() and len(w) > 3]
         if generic and all(w in text_words for w in generic):
             points += 2
-        for strength in re.findall(r"\d+(?:\.\d+)?", str(row.get("Generic Name With Strength", ""))):
-            if re.search(rf"(?<![\d.]){re.escape(strength)}(?![\d.])", text_lower):
-                points += 1
-                break
+        strengths = re.findall(r"\d+(?:\.\d+)?", str(row.get("Generic Name With Strength", "")))
+        found = [s for s in strengths
+                 if re.search(rf"(?<![\d.]){re.escape(s)}(?![\d.])", text_lower)]
+        if strengths and len(found) == len(strengths):
+            points += 2    # every strength, e.g. 500 mg + 125 mg
+        elif found:
+            points += 1
         trade = " ".join(_words(str(row.get("Trade Name", ""))))
         if len(trade.split()) > 1 and trade in " ".join(_words(text_lower)):
             points += 2   # the full name, e.g. "napa extend", not just "napa"
@@ -192,6 +224,7 @@ class BrandIndex:
         With ``expected_brand`` (from a DAR / MA lookup) only that brand is
         looked for, so the result says whether the pack spells it right.
         """
+        text = _fix_numbers(text)
         text_lower = text.lower()
         tokens = _words(text)
         text_words = set(tokens)
@@ -200,13 +233,10 @@ class BrandIndex:
             return self._check_expected(_brand_of(expected_brand) or expected_brand.lower(),
                                         expected_brand, tokens)
 
-        if sum(c.isalpha() for c in text) < MIN_LETTERS_TO_JUDGE:
-            return NameCheckResult(UNREADABLE)
-
         candidates: list[_Candidate] = []
         near_words = []
         for pos, token in enumerate(tokens):
-            for variant in _ocr_variants(token):
+            for variant in _exact_variants(token):
                 if len(variant) < 3:
                     continue
                 if variant in self.rows_by_brand:
@@ -229,6 +259,11 @@ class BrandIndex:
         if exact:
             best = max(exact, key=_Candidate.rank)
             return self._result(best)
+
+        # A correctly spelled brand counts however little else was read, but
+        # with too little text "no registered name" says nothing.
+        if sum(c.isalpha() for c in text) < MIN_LETTERS_TO_JUDGE:
+            return NameCheckResult(UNREADABLE)
 
         # No registered name is spelled correctly. Look for a word one or two
         # letters away from a brand whose maker or generic is also on the pack:
@@ -290,7 +325,7 @@ class BrandIndex:
     def _check_expected(self, brand, display, tokens) -> NameCheckResult:
         best_word, best_score = "", 0
         for token in tokens:
-            for variant in _ocr_variants(token):
+            for variant in _exact_variants(token):
                 if variant == brand:
                     return NameCheckResult(EXACT, token, display, 100)
                 score = round(fuzz.ratio(variant, brand))

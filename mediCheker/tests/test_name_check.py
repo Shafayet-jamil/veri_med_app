@@ -75,3 +75,23 @@ def test_lookup_typed_name(index):
     typo = index.lookup_name("Nappa")
     assert typo.status == NOT_FOUND
     assert "Napa" in typo.suggestions
+
+
+# Real OCR output from the photos in dataset/ (genuine packs).
+
+def test_stray_letter_next_to_name_is_not_a_misspelling(index):
+    # sample-8: the pack edge was read as an "I" glued to "Furoclav".
+    lines = ['Cefuroxime USP 5OOmg', '500', 'Clavulanic Acid BP 125mg:',
+             'Vnive sity,', 'IFuroclav"', 'Cefuroxime USP SOOmg +',
+             'RENATA Livited', 'WT', 'Clavulanic Acid BP 12Smg']
+    result = index.check(" ".join(lines))
+    assert result.status == EXACT
+    # "5OOmg" / "12Smg" are read as 500 mg + 125 mg: the 500 product.
+    assert result.registered_name == "Furoclav 500"
+
+
+def test_brand_alone_is_enough_when_spelled_right(index):
+    # sample-1: only the brand name was readable.
+    result = index.check("Biltin Biv")
+    assert result.status == EXACT
+    assert result.registered_name == "Biltin"
