@@ -36,7 +36,11 @@ build the app.
    flutter build apk --release
    ```
 
-   The file is `build\app\outputs\flutter-apk\app-release.apk`. Send it to
+   The file is `build\app\outputs\flutter-apk\app-release.apk` (about
+   80 MB, works on every phone). For a smaller file (about 30 MB), build
+   one per phone CPU type with `flutter build apk --release --split-per-abi`
+   and use `app-arm64-v8a-release.apk`, which fits almost every phone from
+   the last several years. Send it to
    the phone (USB, Google Drive, …), open it, and allow "Install unknown
    apps" when asked.
 
