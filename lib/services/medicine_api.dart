@@ -45,6 +45,28 @@ class MedicineApi {
     return _decodeResponse(response);
   }
 
+  /// Checks a typed medicine (brand) name against the DGDA register. A name
+  /// that is not registered comes back with `match_found: false` and the
+  /// closest registered spellings, not as an error.
+  Future<Map<String, dynamic>> lookupName(String name) async {
+    final uri =
+        _endpoint('/verify-name').replace(queryParameters: {'name': name});
+    final response = await _client
+        .get(uri, headers: _headers)
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode == 404) {
+      try {
+        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        if (decoded is Map<String, dynamic> && decoded['match_found'] == false) {
+          return decoded;
+        }
+      } on FormatException {
+        // Fall through to the normal error handling.
+      }
+    }
+    return _decodeResponse(response);
+  }
+
   Future<List<Map<String, dynamic>>> getMedicineNames() async {
     final response = await _client
         .get(_endpoint('/medicine-names'), headers: _headers)

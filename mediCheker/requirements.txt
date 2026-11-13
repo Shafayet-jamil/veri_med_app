@@ -4,3 +4,4 @@ opencv-python
 easyocr
 numpy
 waitress
+rapidfuzz

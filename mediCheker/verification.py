@@ -49,7 +49,11 @@ def _find_in_text(ocr_lower: str, target: str) -> str:
     return ocr_lower[idx:idx + len(target)] if idx >= 0 else ""
 
 
-def compute_verification(extracted_text: str, db_row: dict) -> dict:
+def compute_verification(extracted_text: str, db_row: dict,
+                         name_check: dict | None = None) -> dict:
+    """``name_check``: the brand-name spelling result for this record, as
+    returned by ``NameCheckResult.to_dict()``; without it the brand name is
+    only looked for as plain text."""
     checks = []
     ocr_lower = extracted_text.lower()
 
@@ -66,10 +70,21 @@ def compute_verification(extracted_text: str, db_row: dict) -> dict:
     # Brand, manufacturer and generic name: we can only tell whether the
     # registered text appears on the pack, so these are match / not visible.
     trade_db = _get(db_row, "Trade Name", "brand_name")
+    misspelled_name = None
     if trade_db:
-        found = _find_in_text(ocr_lower, trade_db.lower())
-        checks.append(_check("Brand / Trade Name", MATCH if found else NOT_VISIBLE,
-                             found, trade_db, 20))
+        if name_check is None:
+            found = _find_in_text(ocr_lower, trade_db.lower())
+            checks.append(_check("Brand / Trade Name", MATCH if found else NOT_VISIBLE,
+                                 found, trade_db, 20))
+        else:
+            # Spelling check of the brand name (see name_check.py): a name
+            # printed one or two letters off the registered one is a mismatch.
+            status = {"exact": MATCH, "misspelled": MISMATCH,
+                      "other_brand": MISMATCH}.get(name_check.get("status"), NOT_VISIBLE)
+            checks.append(_check("Brand / Trade Name", status,
+                                 name_check.get("read_name", ""), trade_db, 20))
+            if name_check.get("status") == "misspelled":
+                misspelled_name = name_check.get("read_name", "")
 
     company_db = _get(db_row, "Company", "manufacturer")
     if company_db:
@@ -103,10 +118,12 @@ def compute_verification(extracted_text: str, db_row: dict) -> dict:
                              ", ".join(sorted(licences_db)), 15))
 
     return _summarize(checks, is_medicine_record=bool(dar_db or trade_db),
-                      company=company_db)
+                      company=company_db, misspelled_name=misspelled_name,
+                      registered_name=trade_db)
 
 
-def _summarize(checks: list[dict], is_medicine_record: bool, company: str) -> dict:
+def _summarize(checks: list[dict], is_medicine_record: bool, company: str,
+               misspelled_name: str | None = None, registered_name: str = "") -> dict:
     read = [c for c in checks if c["status"] != NOT_VISIBLE]
     matched = [c for c in read if c["status"] == MATCH]
     mismatched = [c for c in read if c["status"] == MISMATCH]
@@ -122,6 +139,17 @@ def _summarize(checks: list[dict], is_medicine_record: bool, company: str) -> di
         verdict, label = "unverifiable", "Cannot Verify"
         description = ("A registration record was found, but none of its details "
                        "could be read clearly on the package. " + PHOTO_TIP)
+    elif misspelled_name:
+        # Counterfeit packs often copy a real brand with a small spelling
+        # change ("Nappa" for "Napa"), so a misspelled name outweighs the
+        # details that do match.
+        verdict, label = "name_misspelled", "Likely Fake: Name Misspelled"
+        description = (f"The package reads \"{misspelled_name}\", but the "
+                       f"registered medicine is spelled \"{registered_name}\". "
+                       f"A misspelled brand name is a common sign of a fake "
+                       f"medicine. If the photo is blurry, retake it to rule out "
+                       f"a misread; otherwise do not use the medicine and show "
+                       f"it to a pharmacist.")
     elif mismatched:
         if score >= 50:
             verdict, label = "suspicious", "Some Details Differ"

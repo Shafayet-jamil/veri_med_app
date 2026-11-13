@@ -266,6 +266,8 @@ class VerificationBadge extends StatelessWidget {
       case 'suspicious':
         return const Color(0xFFF57C00);
       case 'likely_counterfeit':
+      case 'name_misspelled':
+      case 'not_registered':
         return const Color(0xFFC62828);
       case 'no_record':
         return const Color(0xFF6D4C41);
@@ -285,7 +287,10 @@ class VerificationBadge extends StatelessWidget {
       case 'suspicious':
         return Icons.warning_amber;
       case 'likely_counterfeit':
+      case 'not_registered':
         return Icons.gpp_bad;
+      case 'name_misspelled':
+        return Icons.spellcheck;
       case 'no_record':
         return Icons.search_off;
       default:

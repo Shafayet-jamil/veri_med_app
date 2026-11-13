@@ -2,8 +2,33 @@
 
 MediChecker is a Flutter mobile app connected to the Flask API in `mediCheker`.
 It can send a medicine package photo for OCR or look up a medicine by its
-DAR / MA registration number, and check selected medicines for known drug
-interactions.
+DAR / MA registration number or its name, and check selected medicines for
+known drug interactions.
+
+## How a scan decides real or fake
+
+1. The photo is read with OCR (EasyOCR). The app scans as soon as the photo
+   is taken.
+2. The DAR / MA number and MFG licence number are looked up in the DGDA
+   register (`excelFile/medicine_information_DAR_MA.csv`).
+3. The **medicine (brand) name is spell-checked** against every registered
+   trade name (`mediCheker/name_check.py`). This works even when the small
+   numbers are not readable, because the brand name is the largest text on
+   the pack.
+
+| What the pack shows | Verdict |
+|---|---|
+| A registered name, spelled exactly, and details that agree | Matches DGDA Record |
+| A name one or two letters off a registered brand of the same maker (e.g. "Nappa" for "Napa") | **Likely Fake: Name Misspelled** |
+| No registered name, DAR / MA or MFG licence number at all | **Likely Fake: Not Registered** |
+| Registration numbers that belong to a different medicine | Details Do Not Match |
+| Too little text to read | Could Not Read the Package (retake the photo) |
+
+Small OCR slips are forgiven before a name is called misspelled: digits
+read for letters ("Bi1tin" -> "Biltin") and a strength glued to the name
+("Napa500"). A word that is a generic, company or everyday word (such as
+"Paracetamol" or "Each") only counts as a brand when its maker's name is
+also on the pack.
 
 ## Run the Python backend
 
@@ -127,6 +152,9 @@ provide HTTPS. Then build the app with `MEDICHECKER_API_URL` set to the
 - **Interaction results are not medical advice.** Without DDInter the list
   has only 65 pairs. Even with it, "No known interactions" only means the
   pair is not listed. DDInter entries give a severity but no explanation.
+- **A blurry photo can look like a misspelling.** OCR can misread a letter,
+  so "Likely Fake" results tell the user to retake the photo first. Always
+  confirm with a pharmacist before discarding a medicine.
 - **Verification compares text, it cannot prove authenticity.** The scan
   checks the details it can read on the package against the DGDA
   registration record. Details that are not visible in the photo are reported

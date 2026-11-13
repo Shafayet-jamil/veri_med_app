@@ -257,3 +257,82 @@ def test_check_interactions(client):
 def test_check_interactions_rejects_bad_input(client, payload):
     response = client.post("/check-interactions", json=payload)
     assert response.status_code == 400
+
+
+# ── Brand-name spelling ──────────────────────────────────────────────────────
+
+def scan(client):
+    return client.post("/scan-medicine", data=image_upload(),
+                       content_type="multipart/form-data").get_json()
+
+
+def test_scan_identifies_medicine_by_brand_name(client, fake_ocr):
+    # No DAR / MA or MFG licence number readable: only the front of the pack.
+    fake_ocr(["Napa", "Paracetamol 500 mg Tablet", "Beximco Pharmaceuticals Ltd."])
+    body = scan(client)
+    assert body["match_found"] is True
+    assert body["match_type"] == "brand_name"
+    assert body["brand_name"] == "Napa"
+    assert body["name_check"]["status"] == "exact"
+    assert body["verification"]["verdict"] == "likely_genuine"
+
+
+def test_scan_misspelled_brand_is_likely_fake(client, fake_ocr):
+    fake_ocr(["Nappa", "Paracetamol 500 mg Tablet", "Beximco Pharmaceuticals Ltd."])
+    body = scan(client)
+    assert body["brand_name"] == "Napa"            # the medicine it imitates
+    assert body["name_check"]["status"] == "misspelled"
+    assert body["name_check"]["read_name"] == "nappa"
+    verification = body["verification"]
+    assert verification["verdict"] == "name_misspelled"
+    assert "Nappa".lower() in verification["verdict_description"].lower()
+
+
+def test_scan_misspelled_brand_with_real_numbers_is_likely_fake(client, fake_ocr):
+    # The registration numbers are copied from the real pack, but the name
+    # is printed wrong.
+    fake_ocr(["Nappa", "Paracetamol 500 mg", "Beximco Pharmaceuticals Ltd.",
+              f"DAR No. {NAPA_DAR}", "Mfg. Lic. No. 379"])
+    body = scan(client)
+    assert body["match_type"] == "medicine"
+    assert body["verification"]["verdict"] == "name_misspelled"
+
+
+def test_scan_numbers_of_another_brand_are_flagged(client, fake_ocr):
+    # Biltin printed on the pack, but the DAR number belongs to Napa.
+    fake_ocr(["Biltin", "Bilastine 20 mg Tablet", "Eskayef Pharmaceuticals",
+              f"DAR No. {NAPA_DAR}"])
+    body = scan(client)
+    brand = next(c for c in body["verification"]["checks"]
+                 if c["field"] == "Brand / Trade Name")
+    assert brand["status"] == "mismatch"
+    assert body["verification"]["verdict"] in ("suspicious", "likely_counterfeit")
+
+
+def test_scan_unregistered_medicine_is_likely_fake(client, fake_ocr):
+    fake_ocr(["Zorbatex 500", "Paracetamol tablet", "Healwell Pharma Ltd",
+              "Keep away from children"])
+    body = scan(client)
+    assert body["match_found"] is False
+    assert body["verification"]["verdict"] == "not_registered"
+    assert "fake" in body["verification"]["verdict_label"].lower()
+
+
+def test_verify_name_found(client):
+    response = client.get("/verify-name?name=Napa")
+    body = response.get_json()
+    assert response.status_code == 200
+    assert body["brand_name"] == "Napa"
+    assert body["manufacturer"] == "Beximco Pharmaceuticals Ltd."
+
+
+def test_verify_name_not_registered_suggests_spelling(client):
+    response = client.get("/verify-name?name=Nappa")
+    body = response.get_json()
+    assert response.status_code == 404
+    assert body["match_found"] is False
+    assert "Napa" in body["name_check"]["suggestions"]
+
+
+def test_verify_name_missing_parameter(client):
+    assert client.get("/verify-name").status_code == 400

@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -120,26 +121,67 @@ class _ScanScreenState extends State<ScanScreen> {
   String? _error;
   bool _isLoading = false;
 
+  @override
+  void initState() {
+    super.initState();
+    _recoverLostPhoto();
+  }
+
+  /// On Android the system may close the app while the camera is open
+  /// (common on phones with little memory). The photo is then delivered
+  /// when the app restarts, and must be collected here or it is lost.
+  Future<void> _recoverLostPhoto() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      final response = await _picker.retrieveLostData();
+      if (response.isEmpty) return;
+      final file = response.file;
+      if (file != null) {
+        await _useImage(file);
+      } else if (response.exception != null && mounted) {
+        setState(() => _error =
+            'Could not get the photo: ${response.exception!.message}');
+      }
+    } catch (_) {
+      // Nothing to recover.
+    }
+  }
+
   Future<void> _selectImage(ImageSource source) async {
     try {
       final image = await _picker.pickImage(
         source: source,
-        imageQuality: 90,
-        maxWidth: 2400,
+        preferredCameraDevice: CameraDevice.rear,
+        imageQuality: 85,
+        // The server reads at most 2000 px; larger photos only make the
+        // upload slower on mobile data.
+        maxWidth: 2000,
+        maxHeight: 2000,
       );
       if (!mounted || image == null) return;
-      final bytes = await image.readAsBytes();
-      if (!mounted) return;
-      setState(() {
-        _image = image;
-        _imageBytes = bytes;
-        _result = null;
-        _error = null;
-      });
+      await _useImage(image);
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = 'Could not select the image: $error');
+      setState(() => _error = source == ImageSource.camera
+          ? 'Could not open the camera. Allow camera access for MediChecker '
+              'in the phone settings, or choose a photo from the gallery. '
+              '($error)'
+          : 'Could not select the image: $error');
     }
+  }
+
+  /// Shows the photo and scans it straight away, so the user does not
+  /// have to press a second button after taking it.
+  Future<void> _useImage(XFile image) async {
+    final bytes = await image.readAsBytes();
+    if (!mounted) return;
+    setState(() {
+      _image = image;
+      _imageBytes = bytes;
+      _result = null;
+      _error = null;
+    });
+    await _scanImage();
   }
 
   Future<void> _scanImage() async {
@@ -335,7 +377,9 @@ class _ScanScreenState extends State<ScanScreen> {
           FilledButton.icon(
             onPressed: _isLoading || _image == null ? null : _scanImage,
             icon: const Icon(Icons.verified_user_outlined),
-            label: const Text('Scan & Verify Authenticity'),
+            label: Text(_result == null
+                ? 'Scan & Verify Authenticity'
+                : 'Scan Again'),
             style: FilledButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 16),
               shape: RoundedRectangleBorder(
@@ -375,18 +419,22 @@ class _LookupScreenState extends State<LookupScreen> {
   }
 
   Future<void> _lookupLicense() async {
-    final licenseNumber = _licenseController.text.trim();
-    if (licenseNumber.isEmpty) {
-      setState(() => _error = 'Enter a DAR / MA license number.');
+    final query = _licenseController.text.trim();
+    if (query.isEmpty) {
+      setState(() => _error = 'Enter a DAR / MA number or a medicine name.');
       return;
     }
+    // Only digits, dashes and dots: a registration number; else a name.
+    final isNumber = RegExp(r'^[\d\s.\-]+$').hasMatch(query);
     setState(() {
       _isLoading = true;
       _result = null;
       _error = null;
     });
     try {
-      final result = await _api.lookupLicense(licenseNumber);
+      final result = isNumber
+          ? await _api.lookupLicense(query)
+          : await _api.lookupName(query);
       if (!mounted) return;
       setState(() => _result = result);
     } on MedicineApiException catch (error) {
@@ -429,16 +477,17 @@ class _LookupScreenState extends State<LookupScreen> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Enter the DAR / MA registration number printed on the medicine package.',
+                  'Enter the DAR / MA number or the medicine name printed on '
+                  'the package. Names are checked letter by letter against '
+                  'the DGDA register.',
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                 ),
                 const SizedBox(height: 24),
                 SectionCard(
-                  title: 'DAR / MA number lookup',
-                  subtitle:
-                      'Find registration details by license number.',
+                  title: 'DAR / MA number or name',
+                  subtitle: 'Find registration details of a medicine.',
                   icon: Icons.confirmation_number_outlined,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -449,16 +498,16 @@ class _LookupScreenState extends State<LookupScreen> {
                         textInputAction: TextInputAction.search,
                         onSubmitted: (_) => _lookupLicense(),
                         decoration: const InputDecoration(
-                          labelText: 'DAR / MA license number',
-                          hintText: 'e.g. 481-0003-034',
-                          prefixIcon: Icon(Icons.numbers),
+                          labelText: 'DAR / MA number or medicine name',
+                          hintText: 'e.g. 186-0479-006 or Napa',
+                          prefixIcon: Icon(Icons.search),
                         ),
                       ),
                       const SizedBox(height: 12),
                       FilledButton.icon(
                         onPressed: _isLoading ? null : _lookupLicense,
                         icon: const Icon(Icons.search),
-                        label: const Text('Find License Details'),
+                        label: const Text('Find Medicine'),
                         style: FilledButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 16),
                           shape: RoundedRectangleBorder(
@@ -475,7 +524,7 @@ class _LookupScreenState extends State<LookupScreen> {
                   const SizedBox(height: 8),
                   Center(
                     child: Text(
-                      'Looking up license...',
+                      'Looking up medicine...',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                             color:
                                 Theme.of(context).colorScheme.onSurfaceVariant,
@@ -506,8 +555,9 @@ class _PhotoTips extends StatelessWidget {
   const _PhotoTips();
 
   static const _tips = [
-    'Show the side with the DAR / MA number and MFG licence number',
-    'Include the brand name and manufacturer if you can',
+    'Show the front with the medicine (brand) name: its spelling is checked '
+        'against the DGDA register',
+    'Include the DAR / MA number and MFG licence number if you can',
     'Use good light, hold the phone steady and avoid glare on foil',
   ];
 
@@ -632,21 +682,39 @@ class MedicineResultCard extends StatelessWidget {
         Icons.precision_manufacturing_outlined,
         _value('mfg_license_non_biological')
       ),
-      ('Address', Icons.location_on_outlined, _value('description')),
+      if (result['match_found'] != false)
+        ('Address', Icons.location_on_outlined, _value('description')),
     ].where((field) => field.$3.isNotEmpty).toList();
     final notFound = result['match_found'] == false;
     final manufacturerOnly = result['match_type'] == 'manufacturer';
+    final nameCheck = result['name_check'] is Map
+        ? (result['name_check'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final misspelled = nameCheck['status'] == 'misspelled';
+    final suggestions = (nameCheck['suggestions'] as List?)
+            ?.map((s) => s.toString())
+            .toList() ??
+        const <String>[];
     final title = notFound
-        ? 'No matching record'
+        ? 'Not in DGDA Register'
         : manufacturerOnly
             ? 'Manufacturer Found'
-            : 'Medicine Details';
+            : misspelled
+                ? 'Registered Medicine It Imitates'
+                : 'Medicine Details';
     final subtitle = notFound
-        ? null
+        ? (_value('description').isNotEmpty
+            ? _value('description')
+            : suggestions.isNotEmpty
+                ? 'Closest registered names: ${suggestions.join(', ')}'
+                : null)
         : manufacturerOnly
-            ? 'The medicine itself was not identified: its DAR / MA number '
-                'was not readable.'
-            : 'From DGDA registration database';
+            ? 'The medicine itself was not identified: its name and DAR / MA '
+                'number were not readable.'
+            : misspelled
+                ? 'The package reads "${nameCheck['read_name']}", which is '
+                    'not how this registered medicine is spelled.'
+                : 'From DGDA registration database';
 
     return Card(
       elevation: 0,

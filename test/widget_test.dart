@@ -43,6 +43,23 @@ MedicineApi fakeApi() {
               },
             ],
           },
+        '/verify-name' => request.url.queryParameters['name'] == 'Napa'
+            ? {
+                'match_found': true,
+                'brand_name': 'Napa',
+                'manufacturer': 'Beximco Pharmaceuticals Ltd.',
+                'name_check': {'status': 'exact', 'suggestions': []},
+              }
+            : {
+                'match_found': false,
+                'status': 'Not registered',
+                'description': '"Nappa" is not a medicine name registered '
+                    'with DGDA. Did you mean: Napa?',
+                'name_check': {
+                  'status': 'not_found',
+                  'suggestions': ['Napa'],
+                },
+              },
         '/verify-license' => {
             'match_found': true,
             'dar_number': request.url.queryParameters['dar_number'],
@@ -51,7 +68,8 @@ MedicineApi fakeApi() {
           },
         _ => {'error': 'Not found'},
       };
-      final status = body.containsKey('error') ? 404 : 200;
+      final status =
+          body.containsKey('error') || body['match_found'] == false ? 404 : 200;
       return http.Response(jsonEncode(body), status,
           headers: {'content-type': 'application/json'});
     }),
@@ -100,9 +118,9 @@ void main() {
     await tester.tap(find.text('Lookup'));
     await tester.pumpAndSettle();
 
-    expect(find.text('DAR / MA number lookup'), findsOneWidget);
+    expect(find.text('DAR / MA number or name'), findsOneWidget);
     await tester.enterText(find.byType(TextField).first, '481-0003-034');
-    await tester.tap(find.text('Find License Details'));
+    await tester.tap(find.text('Find Medicine'));
     await tester.pumpAndSettle();
 
     expect(find.text('Medicine Details'), findsOneWidget);
@@ -119,10 +137,43 @@ void main() {
 
     await tester.tap(find.text('Lookup'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Find License Details'));
+    await tester.tap(find.text('Find Medicine'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Enter a DAR / MA license number.'), findsOneWidget);
+    expect(find.text('Enter a DAR / MA number or a medicine name.'),
+        findsOneWidget);
+  });
+
+  testWidgets('lookup tab finds a registered medicine by name', (
+    tester,
+  ) async {
+    await tester.pumpWidget(MediCheckerApp(api: fakeApi()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Lookup'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).first, 'Napa');
+    await tester.tap(find.text('Find Medicine'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Medicine Details'), findsOneWidget);
+    expect(find.text('Beximco Pharmaceuticals Ltd.'), findsOneWidget);
+  });
+
+  testWidgets('lookup tab says a misspelled name is not registered', (
+    tester,
+  ) async {
+    await tester.pumpWidget(MediCheckerApp(api: fakeApi()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Lookup'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).first, 'Nappa');
+    await tester.tap(find.text('Find Medicine'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Not in DGDA Register'), findsOneWidget);
+    expect(find.textContaining('Did you mean: Napa?'), findsOneWidget);
   });
 
   testWidgets('result card shows medicine details and extracted text', (
@@ -151,7 +202,7 @@ void main() {
     expect(find.text('Sample label text'), findsOneWidget);
   });
 
-  testWidgets('result card shows "No matching record" when nothing matched', (
+  testWidgets('result card says when nothing is registered', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -162,7 +213,7 @@ void main() {
       ),
     );
 
-    expect(find.text('No matching record'), findsOneWidget);
+    expect(find.text('Not in DGDA Register'), findsOneWidget);
   });
 
   testWidgets('result card says when only the manufacturer was found', (
@@ -259,6 +310,33 @@ void main() {
     expect(find.text('85%'), findsOneWidget);
     expect(find.text('4 match · 1 differ'), findsOneWidget);
     expect(find.text('MFG License Number: does not match'), findsOneWidget);
+  });
+
+  testWidgets('misspelled name is shown as likely fake', (tester) async {
+    await pumpBadge(tester, {
+      'verification_score': 75,
+      'verdict': 'name_misspelled',
+      'verdict_label': 'Likely Fake: Name Misspelled',
+      'verdict_description':
+          'The package reads "nappa", but the registered medicine is spelled '
+              '"Napa".',
+      'matched_fields': 3,
+      'mismatched_fields': 1,
+      'read_fields': 4,
+      'total_fields': 5,
+      'checks': [
+        {
+          'field': 'Brand / Trade Name',
+          'status': 'mismatch',
+          'extracted': 'nappa',
+          'registered': 'Napa',
+        },
+      ],
+    });
+
+    expect(find.text('Likely Fake: Name Misspelled'), findsOneWidget);
+    expect(find.byIcon(Icons.spellcheck), findsOneWidget);
+    expect(find.text('Brand / Trade Name: does not match'), findsOneWidget);
   });
 
   testWidgets('interaction check shows severity, source and attribution', (

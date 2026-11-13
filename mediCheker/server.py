@@ -11,11 +11,12 @@ from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 # Import existing backend modules
-from lookup import run_lookup, lookup_by_dar, load_sheets
+from lookup import run_lookup, lookup_by_dar, load_sheets, prepare_for_display
 from phase2_ocr import run_easyocr, UnreadableImageError
 from interactions import (load_interactions, load_medicine_names, check_interactions,
                           data_sources)
 from verification import compute_verification
+from name_check import get_brand_index, EXACT, MISSPELLED, NOT_FOUND
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("medichecker")
@@ -50,6 +51,7 @@ if os.environ.get("MEDICHECKER_TRUST_PROXY") == "1":
 # Load medicine and company dataframes
 med_df, cmp_df = load_sheets()
 interactions_df = load_interactions()
+brand_index = get_brand_index()
 
 
 def medicine_details(row, dar_number=None):
@@ -67,6 +69,131 @@ def medicine_details(row, dar_number=None):
         "mfg_license_biological": row.get("MFG Lic (Biological)") or row.get("Bio_3") or "",
         "mfg_license_non_biological": row.get("MFG Lic (Non-Biological)") or row.get("NonBio_3") or "",
     }
+
+
+def _record_for_row(row_index):
+    """The registration record (with company licence details) of one row of
+    the medicine sheet, in the same shape as ``run_lookup`` returns."""
+    dar = med_df.at[row_index, "DAR No"]
+    rows = lookup_by_dar(dar, med_df, cmp_df)
+    if rows.empty:
+        rows = med_df.loc[[row_index]]
+    trade = med_df.at[row_index, "Trade Name"]
+    same = rows[rows["Trade Name"] == trade]
+    return prepare_for_display((same if not same.empty else rows).iloc[0:1]).iloc[0].to_dict()
+
+
+def _brand_check_for_record(text, trade_name):
+    """Spell-check the record's brand name on the pack. When it is not there,
+    note a *different* registered brand that is: the numbers may have been
+    copied from another medicine."""
+    check = brand_index.check(text, expected_brand=trade_name)
+    if check.status == NOT_FOUND:
+        other = brand_index.check(text)
+        if (other.status == EXACT and other.row_index is not None
+                and brand_index.med_df.at[other.row_index, "Trade Name"].split()[0].lower()
+                != trade_name.split()[0].lower()):
+            result = other.to_dict()
+            result["status"] = "other_brand"
+            result["registered_name"] = trade_name
+            return result
+    return check.to_dict()
+
+
+NO_RECORD_VERIFICATION = {
+    "verification_score": 0,
+    "verdict": "no_record",
+    "verdict_label": "Could Not Read the Package",
+    "verdict_description": (
+        "Too little text could be read from this photo to check the medicine. "
+        "Retake the photo of the side that shows the brand name, in good "
+        "light and in focus, or type the DAR / MA number in the Lookup tab."
+    ),
+    "checks": [],
+    "matched_fields": 0,
+    "mismatched_fields": 0,
+    "read_fields": 0,
+    "total_fields": 0,
+}
+
+
+def _not_registered_verification(suggestions):
+    description = (
+        "No medicine name, DAR / MA number or MFG licence number on this "
+        "package matches the official DGDA register of medicines. A medicine "
+        "that is not registered is treated as fake: do not use it, and show "
+        "it to a pharmacist."
+    )
+    if suggestions:
+        description += (" Closest registered names: " + ", ".join(suggestions[:3]) + ".")
+    description += (" If the brand name is not in the photo or the photo is "
+                    "blurry, retake it showing the front of the pack.")
+    return {
+        **NO_RECORD_VERIFICATION,
+        "verdict": "not_registered",
+        "verdict_label": "Likely Fake: Not Registered",
+        "verdict_description": description,
+    }
+
+
+def identify_and_verify(text):
+    """Identify the medicine in OCR ``text`` and check it against DGDA.
+
+    The DAR / MA and MFG licence numbers are tried first, then the brand
+    name's spelling. Returns the response fields for /scan-medicine.
+    """
+    result_df = run_lookup(text)
+    if result_df is not None and not result_df.empty:
+        row = result_df.iloc[0].to_dict()
+        response = medicine_details(row)
+        # "manufacturer": only the MFG licence number was recognised, so
+        # the record describes the company, not a specific medicine.
+        if row.get("DAR No"):
+            response["match_type"] = "medicine"
+            name = _brand_check_for_record(text, row.get("Trade Name", ""))
+        else:
+            # run_lookup already picks this maker's product when its name is
+            # spelled right; here look for one of its brands misspelled.
+            name = None
+            brand = brand_index.check(text)
+            if brand.row_index is not None:
+                record = _record_for_row(brand.row_index)
+                if _same_company(record, row):
+                    row = record
+                    response = medicine_details(row)
+                    response["match_type"] = "medicine"
+                    name = brand.to_dict()
+            response.setdefault("match_type", "manufacturer")
+        response["name_check"] = name
+        response["verification"] = compute_verification(text, row, name_check=name)
+        return response
+
+    name = brand_index.check(text)
+    if name.row_index is not None:
+        row = _record_for_row(name.row_index)
+        response = medicine_details(row)
+        response["match_type"] = "brand_name"
+        response["name_check"] = name.to_dict()
+        response["verification"] = compute_verification(text, row,
+                                                        name_check=name.to_dict())
+        return response
+
+    response = {
+        "match_found": False,
+        "match_type": "none",
+        "status": "Not registered" if name.status == NOT_FOUND else "No matching record",
+        "name_check": name.to_dict(),
+    }
+    response["verification"] = (_not_registered_verification(name.suggestions)
+                                if name.status == NOT_FOUND
+                                else NO_RECORD_VERIFICATION)
+    return response
+
+
+def _same_company(a, b):
+    def key(row):
+        return str(row.get("Company", "")).lower().strip()
+    return bool(key(a)) and key(a) == key(b)
 
 
 class _RateLimiter:
@@ -155,42 +282,8 @@ def scan_medicine():
         extracted_text = " ".join(extracted_list) if isinstance(extracted_list, list) else str(extracted_list)
         display_text = " | ".join(extracted_list) if isinstance(extracted_list, list) else str(extracted_list)
 
-        result_df = run_lookup(extracted_text)
-        response_data = {
-            "extracted_text": display_text,
-            "match_found": result_df is not None and not result_df.empty,
-        }
-
-        if result_df is not None and not result_df.empty:
-            row_dict = result_df.iloc[0].to_dict()
-            response_data.update(medicine_details(row_dict))
-            # "manufacturer": only the MFG licence number was recognised, so
-            # the record describes the company, not a specific medicine.
-            response_data["match_type"] = "medicine" if row_dict.get("DAR No") else "manufacturer"
-            verification = compute_verification(extracted_text, row_dict)
-            response_data["verification"] = verification
-        else:
-            response_data["match_type"] = "none"
-            response_data["status"] = "No matching record"
-            response_data["verification"] = {
-                "verification_score": 0,
-                "verdict": "no_record",
-                "verdict_label": "Not Found in DGDA Records",
-                "verdict_description": (
-                    "No DAR / MA number or MFG licence number on the package "
-                    "matched the DGDA database. The numbers may not have been "
-                    "readable in this photo: try a clearer photo, or type the "
-                    "DAR / MA number in the Lookup tab. If the number is "
-                    "readable and still not found, the medicine may not be "
-                    "registered."
-                ),
-                "checks": [],
-                "matched_fields": 0,
-                "mismatched_fields": 0,
-                "read_fields": 0,
-                "total_fields": 0,
-            }
-
+        response_data = {"extracted_text": display_text}
+        response_data.update(identify_and_verify(extracted_text))
         return jsonify(response_data)
 
     except UnreadableImageError as e:
@@ -240,6 +333,35 @@ def verify_license():
     except Exception:
         log.exception("License lookup failed")
         return jsonify({"error": "Internal server error"}), 500
+
+@app.route('/verify-name', methods=['GET', 'POST'])
+def verify_name():
+    """Is a typed medicine (brand) name registered with DGDA?"""
+    name = request.args.get('name')
+    if not name and request.is_json:
+        name = (request.get_json(silent=True) or {}).get('name')
+    if not isinstance(name, str) or not name.strip():
+        return jsonify({"error": "Missing name parameter"}), 400
+    if len(name) > 100:
+        return jsonify({"error": "Name is too long"}), 400
+
+    check = brand_index.lookup_name(name)
+    if check.row_index is None:
+        suggestions = check.suggestions
+        description = f"\"{name.strip()}\" is not a medicine name registered with DGDA."
+        if suggestions:
+            description += " Did you mean: " + ", ".join(suggestions) + "?"
+        return jsonify({
+            "match_found": False,
+            "brand_name": name.strip(),
+            "status": "Not registered",
+            "description": description,
+            "name_check": check.to_dict(),
+        }), 404
+    response = medicine_details(_record_for_row(check.row_index))
+    response["name_check"] = check.to_dict()
+    return jsonify(response)
+
 
 @app.route('/medicine-names', methods=['GET'])
 def get_medicine_names():
