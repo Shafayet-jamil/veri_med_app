@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 
 import 'screens/interaction_checker_screen.dart';
 import 'services/medicine_api.dart';
+import 'services/medicine_service.dart';
 import 'widgets/section_card.dart';
 import 'widgets/verification_badge.dart';
 
@@ -15,7 +16,7 @@ class MediCheckerApp extends StatelessWidget {
   const MediCheckerApp({super.key, this.api});
 
   /// Overrides the backend client, e.g. with a fake one in tests.
-  final MedicineApi? api;
+  final MedicineService? api;
 
   @override
   Widget build(BuildContext context) {
@@ -52,7 +53,7 @@ class MediCheckerApp extends StatelessWidget {
 class AppShell extends StatefulWidget {
   const AppShell({super.key, this.api});
 
-  final MedicineApi? api;
+  final MedicineService? api;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -103,14 +104,14 @@ class _AppShellState extends State<AppShell> {
 class ScanScreen extends StatefulWidget {
   const ScanScreen({super.key, this.api});
 
-  final MedicineApi? api;
+  final MedicineService? api;
 
   @override
   State<ScanScreen> createState() => _ScanScreenState();
 }
 
 class _ScanScreenState extends State<ScanScreen> {
-  late final _api = widget.api ?? MedicineApi();
+  late final _api = widget.api ?? MedicineService.defaultService;
   final _picker = ImagePicker();
 
   XFile? _image;
@@ -396,14 +397,14 @@ class _ScanScreenState extends State<ScanScreen> {
 class LookupScreen extends StatefulWidget {
   const LookupScreen({super.key, this.api});
 
-  final MedicineApi? api;
+  final MedicineService? api;
 
   @override
   State<LookupScreen> createState() => _LookupScreenState();
 }
 
 class _LookupScreenState extends State<LookupScreen> {
-  late final _api = widget.api ?? MedicineApi();
+  late final _api = widget.api ?? MedicineService.defaultService;
   final _licenseController = TextEditingController();
 
   Map<String, dynamic>? _result;

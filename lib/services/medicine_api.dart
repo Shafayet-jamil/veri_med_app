@@ -3,15 +3,21 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 
-const _apiBaseUrl = String.fromEnvironment(
-  'MEDICHECKER_API_URL',
-  defaultValue: 'http://10.0.2.2:5000',
-);
+import 'medicine_service.dart';
+
+/// Set at build time to use the Python server instead of the on-device
+/// checker, e.g. `--dart-define=MEDICHECKER_API_URL=http://10.0.2.2:5000`.
+const _configuredUrl = String.fromEnvironment('MEDICHECKER_API_URL');
+const _apiBaseUrl =
+    _configuredUrl == '' ? 'http://10.0.2.2:5000' : _configuredUrl;
 
 /// Must match the server's MEDICHECKER_API_KEY when the server sets one.
 const _apiKey = String.fromEnvironment('MEDICHECKER_API_KEY');
 
-class MedicineApi {
+/// Client for the optional Python server in `mediCheker/`.
+class MedicineApi implements MedicineService {
+  static const configuredUrl = _configuredUrl;
+
   MedicineApi({http.Client? client, String apiKey = _apiKey})
       : _client = client ?? http.Client(),
         _headers = {if (apiKey.isNotEmpty) 'X-API-Key': apiKey};
@@ -19,6 +25,7 @@ class MedicineApi {
   final http.Client _client;
   final Map<String, String> _headers;
 
+  @override
   Future<Map<String, dynamic>> scanMedicine(XFile image) async {
     final request = http.MultipartRequest('POST', _endpoint('/scan-medicine'))
       ..headers.addAll(_headers)
@@ -36,6 +43,7 @@ class MedicineApi {
     return _decodeResponse(response);
   }
 
+  @override
   Future<Map<String, dynamic>> lookupLicense(String licenseNumber) async {
     final uri = _endpoint('/verify-license')
         .replace(queryParameters: {'dar_number': licenseNumber});
@@ -48,6 +56,7 @@ class MedicineApi {
   /// Checks a typed medicine (brand) name against the DGDA register. A name
   /// that is not registered comes back with `match_found: false` and the
   /// closest registered spellings, not as an error.
+  @override
   Future<Map<String, dynamic>> lookupName(String name) async {
     final uri =
         _endpoint('/verify-name').replace(queryParameters: {'name': name});
@@ -67,6 +76,7 @@ class MedicineApi {
     return _decodeResponse(response);
   }
 
+  @override
   Future<List<Map<String, dynamic>>> getMedicineNames() async {
     final response = await _client
         .get(_endpoint('/medicine-names'), headers: _headers)
@@ -79,6 +89,7 @@ class MedicineApi {
     return [];
   }
 
+  @override
   Future<Map<String, dynamic>> checkInteractions(
       List<String> medicineNames) async {
     final response = await _client

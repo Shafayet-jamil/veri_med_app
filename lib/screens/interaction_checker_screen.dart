@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import '../services/medicine_api.dart';
+import '../services/medicine_service.dart';
 
 class InteractionCheckerScreen extends StatefulWidget {
   const InteractionCheckerScreen({super.key, this.api});
 
-  final MedicineApi? api;
+  final MedicineService? api;
 
   @override
   State<InteractionCheckerScreen> createState() =>
@@ -12,7 +13,7 @@ class InteractionCheckerScreen extends StatefulWidget {
 }
 
 class _InteractionCheckerScreenState extends State<InteractionCheckerScreen> {
-  late final _api = widget.api ?? MedicineApi();
+  late final _api = widget.api ?? MedicineService.defaultService;
   final _searchController = TextEditingController();
 
   List<Map<String, dynamic>> _allMedicines = [];
